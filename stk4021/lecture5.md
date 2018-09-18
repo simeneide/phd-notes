@@ -22,8 +22,12 @@ for each of the following priors:
 ![](lecture5.assets/lecture5-7fd77ff2.png)
 
 (c) theta is a mixure 0.50 * uniform + 0.50 * Beta(c,c).
+![](lecture5.assets/lecture5-88d2c5c5.png)
 
 (d) theta is a mixture 0.50 * uniform + 0.50 * unit-point-mass-at-0.50.
+
+
+
 
 Finish exercises from last time (if you did not do them last week).
 
