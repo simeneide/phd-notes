@@ -4,7 +4,13 @@ date: 2018-09-03T11:41:34+02:00
 ---
 
 ---
-## 22 sept
+# Progress 22 sept
+
+In this progress:
+- RNN recommender
+- Russo paper
+- Idea of data1 vs data2 (rec sys data paradox)
+- Implementation of first meta vector model
 
 Things done:
 
@@ -168,7 +174,7 @@ Also, the model finds a "smooth" relation to the hour of day:![](progress.assets
 
 There is much more we can say about this, but Ill stop here. There is also many extension we can do, like the xWy translation of the vectors I proposed earlier. (I actually implemented this, but Ill present results later).
 
-## 14 sept -  Progress meeting
+# 14 sept -  Progress meeting
 
 Arnoldo, David and Simen agreed that the vector-bandit model note is a good start. No need to focus very much on whether it is bayesian or not: "make it work first".
 
