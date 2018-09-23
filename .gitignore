@@ -1,2 +1,3 @@
 .ipynb_checkpoint*
-*.ipynb # leave out notebooks for now
+# leave out notebooks for now
+*.ipynb
