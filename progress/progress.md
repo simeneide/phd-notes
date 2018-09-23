@@ -149,7 +149,8 @@ class BanditVec(nn.Module):
         score = self.scalelayer(covariates)
 
         return score
-̀̀̀
+
+```
 
 I have done a fast training of this model on a subset of the data described above. I use the crossEntropy Loss to minimize the function.
 
