@@ -64,6 +64,38 @@ We register the user (userId_idx), the item proposed (itemId_idx), the position 
 
 > Idea: We use pretrained algorithms in data 1-land to improve our model trained in data 2-land.
 
+We have:
+- the data specified in Data 2 above.
+- A set of pre-trained vectors $x_u \in Rˆd$, for all users $u = (1,.., N_u)$
+- A set of pre-trained vectors $y_i \in Rˆd$, for all items $i = (1,.., N_u)$
+- All our normalizing variables are one-hot encoded, and given parameters w_{weekday}, w_{itemPos}, ...
+
+For every data point, we wish to model the click probability.
+
+Create a variable that we will call the CF-score by the following:
+$$
+CF(X) = x_uˆT y_i
+$$
+
+Define a vector of the CF score and all normalizing parameters:
+
+$$
+Z = [CF(X), w_{weekday}, w_{itemPos}, ... ]
+$$
+
+Then, transform Z into 2 values representing the logits of click probability:
+
+$$
+\alpha = BZ + c
+$$
+where B is a parameter vector, and c is a constant.
+
+Finally, the click probability is modeled as:
+
+prob(click | X) = \frac{exp(\alpha[1])} {exp( \alpha[1] + \alpha[2])}
+
+The following code implements this model as a pytorch model:
+
 ``` python
 class BanditVec(nn.Module):
     def __init__(self, pretrained_weights, norm_ind2val):
@@ -118,6 +150,22 @@ class BanditVec(nn.Module):
 
         return score
 ̀̀̀
+
+I have done a fast training of this model on a subset of the data described above. I use the crossEntropy Loss to minimize the function.
+
+The loss converges fine, and by inspecting the model, I do get some statistics out that makes it seem to converge to something useful. For example, there is a positive relationship between the cf score and the probability of click (logit value in y axis):
+
+
+ ![](progress.assets/progress-5d8944cd.png)
+
+The same plot also shows that the click probabilities decreases as item Position increase. It can also be seen by inspecting the $w_{item_pos}$ directly: (note that these plots may be inverted around zero as it is only an input to a regression model and gets multiplied by an arbitrary weight parameter)
+
+![](progress.assets/progress-0afd4627.png)
+
+Also, the model finds a "smooth" relation to the hour of day:![](progress.assets/progress-1dbac96d.png)
+
+
+There is much more we can say about this, but Ill stop here. There is also many extension we can do, like the xWy translation of the vectors I proposed earlier. (I actually implemented this, but Ill present results later).
 
 ## 14 sept -  Progress meeting
 
