@@ -32,6 +32,8 @@ Might be good for **supervisors** to read/skim through?
  + "Proper Thompson": Bayesian: Add priors and everything...
 
 **David**: Do you recognize frequentist thompson 1+2 by some more used names? I am sure these things have been explored in the context of bandits...
+ + David: Freq Thompson 1.5: From economics literature: Probability Matching / Probability Sampling
+ + David: Uncertainty sampling: Then 1/n * sum(theta_i) is Norm(theta, sigma/sqrt(n))
 
 #### Data 1 vs Data 2 (the recommender system data paradox)
 My head has been spinning with this concept for a while, and I believe it makes sense to write down a bit on it.
