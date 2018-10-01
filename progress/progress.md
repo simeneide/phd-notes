@@ -3,7 +3,30 @@ title: "Progress"
 date: 2018-09-03T11:41:34+02:00
 ---
 
----
+----
+
+# Skype meeting 1. okt
+With: Arnoldo, David, Simen
+
+- Simen went through Data1 vs data2
+  + Confirmation from arnoldo and David that this makes sense
+- Simen went through first meta-model
+  + Feedback ok
+  + maybe plot embedding+regression factor for embedding plots for visualization
+- Simen gave a brief explanation of the simulator he created.
+  + Tried it with Bernoulli-bandits.
+  + Stated the weird result that thompson is worse than greedy+epsilongreedy.
+  + Pass code around.
+
+To do:
+- Get more done on RNN recommender (wrap up at some point?)
+- Get some meta-vec bandit model into production to get a benchmark against current model
+  + Add some more submodels first?
+  + David: Tweak cf_score with some translation or trainable?
+- Simen will be on conference this week + holiday next. Next meeting: 16th oct
+
+----
+
 # Progress 22 sept
 
 In this progress:
@@ -176,6 +199,8 @@ Also, the model finds a "smooth" relation to the hour of day:![](progress.assets
 
 There is much more we can say about this, but Ill stop here. There is also many extension we can do, like the xWy translation of the vectors I proposed earlier. (I actually implemented this, but Ill present results later).
 
+----
+
 # 14 sept -  Progress meeting
 
 Arnoldo, David and Simen agreed that the vector-bandit model note is a good start. No need to focus very much on whether it is bayesian or not: "make it work first".
@@ -210,6 +235,7 @@ http://quinonero.net/Publications/AdPredictorICML2010-final.pdf
   + There’s a good tutorial on the theory of these things at <https://pdfs.semanticscholar.org/presentation/a32b/b67c2d1cc4d03219ec554557b80e4a335073.pdf>, but it’s pretty heavy going if you just want to use them.
   + I hear the recent tutorial by Russo and Van Roy <https://arxiv.org/abs/1707.02038> is quite good too - certainly the abstract is promising!
 
+----
 
 # Progress 3. sept 2018
 
