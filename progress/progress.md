@@ -5,6 +5,20 @@ date: 2018-09-03T11:41:34+02:00
 
 ----
 
+# Progress meeting 16. oct
+With: David, elja, Arnoldo, Simen
+
+- Short intro Simen / Elja
+- Discussed what happened at recsys18: quite some focus on bandits.
+
+Tasks for now:
+- Simen: links to paper in blog post
+- Arnoldo + David read through blog
+- Simen: Links to papers in post
+- Simen: Resend example implementation of meta-bandit
+- Simen: Try build a user-item bandit
+- Simen: Try to set up model (same with arnoldo+david)
+
 # Skype meeting 1. okt
 With: Arnoldo, David, Simen
 
