@@ -2,8 +2,83 @@
 title: "Progress"
 date: 2018-09-03T11:41:34+02:00
 ---
+# Work on recommender simulator after 2.nov
+
+
+
+### Work 6 nov: Fix unstable training + add variance hack + "No need for exploration"
+
+Experiment with U=I=100 and steps = 20k.
+
+Main findings:
+
+- Needed lower learning rates for stable optimization
+- Not really any need for any exploration to solve the environment.
+- Not really sure that the variance hack Arnoldo suggested will work: The parameters does not converge to the right one, but can "circle around" as we can only get up to a factor of truth (from discussion which arnoldo already pointed out).
+- Qualitatively same results with U = 100, I = 1000, d = 50
+
+<img alt="progress-d909641a.png" src="assets/progress-d909641a.png" width="" height="" >
+
+https://github.com/simeneide/phd-notes/blob/e612c2ce0032e9a203731a911229c09f07b03f13/general_notes/simple-recommender-eps-greedy-covarhack.ipynb
 
 ----
+# Progress and work meeting 2. nov
+With: David, Arnoldo, Simen
+
+- Milestone: phd-application delivered to UiO.
+- Went through the two simulations (beta-bernoulli and rec simulator)
+- Discussion of the likelihood models Simen set up for meta vec (only Arnoldo+Simen)
+
+####  Beta-Bernoulli:
+https://github.com/simeneide/phd-notes/blob/master/general_notes/Beta-Bernoulli-thompson.ipynb
+
+  - eps-greedy can do reasonably well if tuned carefully, but never very well.
+  - Short number of steps is a bit troublesome for all of these heuristics - a Gittins index approach is viable here, and will likely outperform them all. So short runs should be used to gain intuition for long runs only.
+  - Thompson does moderately well without much effort. Usually something can be carefully tuned to the specific problem in hand, if you know enough about what is coming before it gets there.
+  - The more exploitative policies have higher variance.
+  - Parameterising the posteriors for decision-making is a useful thing to do. I did something extremely similar in a game theory paper that never quite got written.
+  - Ben May’s proof of convergence of TS is valid for your “tuned” posteriors. I don’t know whether things like Shipra Agarwals regret proof can give any insights as to whether it’s a good thing to do.
+
+Conclusions:
+- Read and understand and possibly implement gittins index. (james E will send his implementation and paper submission)
+
+
+#### Simple Recommender simulation
+- https://github.com/simeneide/phd-notes/blob/master/general_notes/thompson-sampling-simple-recommender-simulator.ipynb
+
+##### Creation of simulator
+Feedback:
+- Is the simulator actually creating uniform users/items on the hypersphere?
+- Simulator does not provide positive click probabilities (as its only a dot product between two arbitrary unit norm vectors). Do some logit transform to ensure [0,1]?
+
+##### Model
+- Many components: It is difficult to understand all effects, and the algorithm have too many moving parts: the model (MF), the optimization method (SGD) and the data forgetting (ReplayBuffer).
+  + Unsure of exactly how to reduce this problem. If one is completely training a new model at every step, one would get issues of overfitting (unless doing some train/test split).
+  + All optimizers are good/bad. Possible to make some simple but robust versions? Dont need to be optimal..
+
+- The preference vectors are unobservable.
+
+###### Exploration with current model (likelihood)
+Currently just doing epsilon-greedy on the current model. We need some uncertainty in the model parameters to explore more efficiently (i.e. thompson).
+
+David proposed that we should estimate the uncertainty of parameters so that we could sample from these distributions and get thompson exploration. We all agreed. However, after
+
+Simple parameter uncertainty:
+- During training of parameters, take last k steps of training and calculate the covariance $\Sigma$ of the parameters. Then we can sample the uncertainty in our parameters with something like $x_u = N(\hat{x_u}, \Sigma / k)$. However, is still valid when we can only get the vectors up to a factor?
+
+Proper parameter training:
+- Build the full likelihood function on both the user vectors x_u and item vectors y_i, and find mle by setting all $\frac{\partial l(data)}{\partial x_u} = 0$, $\frac{\partial l(data)}{\partial y_i} = 0$. This will be very messy as there is so much interedependency.
+
+Conclusions:
+- Add stochasticity of model parameters and make a exploratory model that samples from this instead.
+
+- Send over some reading material on SGD for A.
+
+#### Likelihood models
+- Arnoldo seems to be puzzled with my $x_uWy_i$ constructed model. I do agree that Ive not seen it before either.
+- Arnoldo liked the two layer approach better, and that one is probably the one to focus on.
+- Unsure of the normalization layer $x = Wx/|Wx|$. Instead, can we put some boundaries on W such that $|Wx| = 1$ whenever $|x| = 1$?. Arnoldo suggested to search "idem potent" matricies
+---
 
 # Progress meeting 16. oct
 With: David, elja, Arnoldo, Simen
