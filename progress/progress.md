@@ -2,9 +2,65 @@
 title: "Progress"
 date: 2018-09-03T11:41:34+02:00
 ---
+
+# Progress meeting 12 nov
+With: David, Simen
+
+- 
+- Deep learning with bandit feedback
+  - Dividing by sum of probs is normalizing constant
+
+# 12 nov: Meeting with finnAIR
+With: Joakim, Olav, Simen
+
+- presented MAB and recommender simulator
+- Reasons for why no exploration might work:
+  - Stochastic gradient descent might accidentally do some kind of efficient exploration of neighbourhood.
+  - Maybe the model is continuously translating and therefore is exploring because some items are moved before others.
+
+- Possible things to investigate:
+  - create an environment that has two modes: the "efficient" greedy algorithms will then just find local optima. an epsilon greedy will jump between the modes and end up in the optimal one.
+ - Change optimizer into a non-stochastic one:
+   - use all data when doing opt step
+   - find MLE every time.
+
+---
+
+
+
 # Work on recommender simulator after 2.nov
 
+### Work on implementation on the vector bandit model
 
+- First results gave weird recommendations. may it be that this is the unexplored area of the model?
+- Fitting a policy on other logged data.
+- Weigh observations by popularity seemed to help (an exposure model)
+
+
+### MAB extensions
+
+- read in bandit book
+- started to read on UCB
+
+
+### Work on paper: " Causal Inference for Recommendations"
+
+- They split the recommendation problem into two subtasks:
+ - **Exposure model**: Build an exposure model, modelling how likely a user u will be exposed to an item i (exposed: $a_{ui} = 1$).
+   - Two different exposure models:
+     - $P(a_{u,i}) = Bernoulli(\alpha_i)$ aka popularity model
+     - $P(a_{u,i}) = Poisson(\pi_u^T \gamma_i )$, i.e. a poisson matrix factorization
+ - **Click Model:**: Given exposure, what is the probability of being clicked:
+   - $P(y_{ui} | a_{ui} = 1) = N(\theta_u^T \beta_i, 1)$
+
+- The two models are trained independently. First fit exposure model and then fit click model. The probabilities from exposure models are used to weight the data in the click model. (importance sampling idea)
+
+
+#### Spin off on this model
+- Can we find the information matrix on the click model and use a normal approximation to get an approximate posterior? If so, we have uncertainties in the user- and item vectors!
+- Have done some calculations on likelihood.
+  - Need to redo calc and add prior.
+- Are the unimodal requirements satisfied?
 
 ### Work 6 nov: Fix unstable training + add variance hack + "No need for exploration"
 
@@ -15,6 +71,7 @@ Main findings:
 - Needed lower learning rates for stable optimization
 - Not really any need for any exploration to solve the environment.
 - Not really sure that the variance hack Arnoldo suggested will work: The parameters does not converge to the right one, but can "circle around" as we can only get up to a factor of truth (from discussion which arnoldo already pointed out).
+- In general: way too unstable environments to get consistent results. Move to bigger computers?
 - Qualitatively same results with U = 100, I = 1000, d = 50
 
 <img alt="progress-d909641a.png" src="assets/progress-d909641a.png" width="" height="" >
