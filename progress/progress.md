@@ -2,11 +2,22 @@
 title: "Progress"
 date: 2018-09-03T11:41:34+02:00
 ---
+# progress meeting 19 nov
+With: David, Simen
+
+- Discussed current model that takes three different rec.models and
+  - produces a compressed feature space,
+  - Trained on logged recommender events (views/clicks)
+- Model does not seem to "work". The loss converges etc, but when sanity checking recommendations on real users we have knowledge about, it does not make sense.
+- Tried to control for exposure/popularity, unsure if it has any effect
+- Decided to limit problem to only one underlying rec system and see if we can get the "training on logged rec data" correct.
+- Decided to read up on importance sampling and inerse propensity.
+  - Possibly a problem with variance here..
 
 # Progress meeting 12 nov
 With: David, Simen
 
-- 
+-
 - Deep learning with bandit feedback
   - Dividing by sum of probs is normalizing constant
 
