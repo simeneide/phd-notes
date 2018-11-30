@@ -2,6 +2,25 @@
 title: "Progress"
 date: 2018-09-03T11:41:34+02:00
 ---
+
+
+# progress meeting 30 nov
+
+What have Simen done:
+- Released models into production
+- Starting to read suggested papers related to Davids link on [Online Bayesian Deep Learning in prod at tencent](https://www.inference.vc/online-bayesian-deep-learning-in-production-at-tencent/).
+- Read and presented paper “Bayesian Probabilistic Matrix Factorization using Markov Chain Monte Carlo” [in course](https://eide.ai/post/2018-11-23-bpmf-paper/).
+- Bayesian course exam
+- Div FINN things (improving our image similarity model, reducing number of overly popular bodysuits in algorithm by post proc hack etc)
+
+
+Simen to next time:
+- Continue with online tests
+- send over likelihood function work we did
+- Try to implement the [bayesian mf model]((https://eide.ai/post/2018-11-23-bpmf-paper/))
+- Look at slap and spike priors (something that we can use when having multiple models concatted?)
+- Continue reading on tencent paper+methods
+
 # progress meeting 19 nov
 With: David, Simen
 
