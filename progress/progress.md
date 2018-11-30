@@ -5,14 +5,18 @@ date: 2018-09-03T11:41:34+02:00
 
 
 # progress meeting 30 nov
+With: David, Arnoldo (first 50%), Simen
 
 What have Simen done:
-- Released models into production
+- Released two models into production
+  - The car model have 35% increased click rate but lower conversions. Also, found that the item candidate sets are different in the AB test. Will roll out new with same item candidate set.
+  - The general merchandise model is released into a meta model. Seems to work well at the moment, but very early.
+<img alt="progress-4d241863.png" src="assets/progress-4d241863.png" width="" height="" >
+
 - Starting to read suggested papers related to Davids link on [Online Bayesian Deep Learning in prod at tencent](https://www.inference.vc/online-bayesian-deep-learning-in-production-at-tencent/).
 - Read and presented paper “Bayesian Probabilistic Matrix Factorization using Markov Chain Monte Carlo” [in course](https://eide.ai/post/2018-11-23-bpmf-paper/).
 - Bayesian course exam
 - Div FINN things (improving our image similarity model, reducing number of overly popular bodysuits in algorithm by post proc hack etc)
-
 
 Simen to next time:
 - Continue with online tests
