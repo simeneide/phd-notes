@@ -3,6 +3,14 @@ title: "Progress"
 date: 2018-09-03T11:41:34+02:00
 ---
 
+# Implementation of Bayesian matrix factorization through mcmc
+
+- Implemented an mcmc for the model using movielens 1m dataset.
+- Compared with spotlights explicit model
+- Code and results can be found [here](https://github.com/simeneide/phd-notes/blob/master/general_notes/bayesian_MF.ipynb).
+- How to adapt this to the implicit feedback setting?
+- A possibility would be to use this model for the item side, but modify the user side to be an rnn. Then one can alternate between training item and user side. Gives you a semi-bayesian model.
+
 
 # progress meeting 30 nov
 With: David, Arnoldo (first 50%), Simen
