@@ -2,6 +2,34 @@
 title: "Progress"
 date: 2018-09-03T11:41:34+02:00
 ---
+# Online results
+
+## meta-bap-bandit på bap-browse
+Meta-modellen med bap--browse-bandit drar inn rundt 1000 klikk ekstra om dagen: fra 18.4% til 19.4% i klikkrate. Det er en økning på 5%. Det er en liten økning i reward siste uka (etter at modellen stabiliserte seg).
+
+Foreslår å gi 100% trafikk til bandit-modellen.
+
+<img alt="progress-5bc73c10.png" src="assets/progress-5bc73c10.png" width="" height="" >
+
+fordelingen av de forskjellige submodellene viser at bandit-submodellen (orange) enten er den mest brukte eller nest mest brukte modellen og har høyest eller nest høyest klikkrate:
+<img alt="progress-fc223ed9.png" src="assets/progress-fc223ed9.png" width="" height="" >
+
+Reward (weekly):
+<img alt="progress-c7bd9c86.png" src="assets/progress-c7bd9c86.png" width="" height="" >
+
+## car-browse-bandit on car-browse
+Car-browse-bandit har en betydelig høyere klikkrate enn de andre alternativene på markedsforside bil.
+
+Hovedårsaken til forskjellen mellom used_car_rot_infused og used_car_als er utvalget den kan anbefale mellom, der sistnevnte kan anbefale for alt som har vært aktivt, mens førstnevnte kun kan anbefale siste 10 dager (eller noe slikt).
+
+Forskjellen mellom car-browse-bandit (23.6%) og used_car_als (22.0%) er på *7% økning i klikkrate* siste uke.
+
+Samtidig ser det ut som at bandit-modellen får denne økningen i klikkrate på bekostning av konverteringer. Reward er lavest for bandit-modellen med 0.55 vs 0.6 på sammenlignbar modell. *Allikevel er det modellen som kun kan anbefale siste 10 dager som har høyest reward (selv om den hadde lavest klikkrate). Det ser ut som det er fordelaktig for disse modellene å bli begrenset på hvor gamle annonser de kan anbefale*.
+
+Foreslår at vi lager en ny AB-test her hvor vi beholder finn_used_car_als_60d_rot_infused og setter opp en ny bandit-modell med samme item-strategy for å teste også denne kombinasjonen.
+
+<img alt="progress-9116ca92.png" src="assets/progress-9116ca92.png" width="" height="" >
+<img alt="progress-696e0749.png" src="assets/progress-696e0749.png" width="" height="" >
 
 # Implementation of Bayesian matrix factorization through mcmc
 
