@@ -2,6 +2,28 @@
 title: "Progress"
 date: 2018-09-03T11:41:34+02:00
 ---
+
+# Arnoldo Meeting 20 dec 2018
+
+## Discussed meta
+- two different models:
+ - with one underlying submodel
+ - with concatenated submodels with missing data
+
+
+## In lancaster, simen should present the following:
+- progress on  meta models
+- bayesian models
+- Sequential recommendations
+
+Prepare well, and go into details
+
+## send to arnoldo
+- paper on RNN rec
+- the evaluation paper on different recs
+- bayesian exploration paper
+-
+
 # Online results
 
 ## meta-bap-bandit på bap-browse
