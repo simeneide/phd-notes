@@ -22,7 +22,6 @@ Prepare well, and go into details
 - paper on RNN rec
 - the evaluation paper on different recs
 - bayesian exploration paper
--
 
 # Online results
 
