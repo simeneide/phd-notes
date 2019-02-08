@@ -22,6 +22,7 @@ def preprocess_rsc15(density_value = 1.0, limit_train = None, limit_test = None)
                                    density=density_value)
 
     ind2val, val2ind = {}, {}
+    col_transform = {'SessionId' : 'sessionId', 'ItemId' : 'itemId'}
     for col in ['SessionId','ItemId']:
         vals = np.unique(np.concatenate((train[col].values, test[col].values)))
         ind2val[col] = {idx+1 : id for idx, id in enumerate(vals)}
