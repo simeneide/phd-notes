@@ -3,6 +3,20 @@ from ludewig.evaluation import loader
 import pandas as pd
 import numpy as np
 from spotlight.interactions import Interactions, SequenceInteractions
+import torch
+def preprocess_data(dataset, device):
+    if dataset == "rsc":
+        ##RCS DATA##
+        dat, dat_seq , ind2val = preprocess_rsc15(density_value = 0.005, limit_train = None, limit_test = None)
+
+    elif dataset == "generated":
+        ## GENERATED DATA ##
+        dat, dat_seq, ind2val = preprocess_generated()
+
+    # GENERATE A SMALLER TRAINING SET FOR METRIC TESTING
+    dat_seq = {name : torch.tensor(dat_seq[name].sequences).long().to(device) for name in ['train','test']}
+    dat_seq['train_small'] = dat_seq['train'][torch.randint(len(dat_seq['train']), (5000,))]
+    return dat, dat_seq, ind2val
 
 def preprocess_rsc15(density_value = 1.0, limit_train = None, limit_test = None):
     """
@@ -64,3 +78,4 @@ def preprocess_generated(num_users = 100, num_items = 1000, num_interactions = 1
     ind2val['itemId'] = {idx : item for item, idx in enumerate(range(dataset.item_ids.max()))}
 
     return dat, dat_seq, ind2val
+
