@@ -70,12 +70,14 @@ class LSTMrec(nn.Module):
 
         with pyro.plate("data", len(seq), subsample_size = self.batch_size) as ind:
             batch_seq = seq[ind,]
-            batch_mask = (batch_seq!=0).float()
+            x = batch_seq[:,:-1]
+            y = batch_seq[:,1:]
+            batch_mask = (y!=0).float()
 
-            lprobs = lifted_reg_model(batch_seq)
+            lprobs = lifted_reg_model(x)
             data = pyro.sample("obs_x", 
                                dist.Categorical(logits=lprobs).mask(batch_mask).to_event(2), 
-                               obs = batch_seq)
+                               obs = y)
         return lifted_reg_model
     
     def guide(self, x):
@@ -93,7 +95,8 @@ class LSTMrec(nn.Module):
         muV = pyro.sample("muV", dist.MultivariateNormal(muV_mean, scale_tril=global_triV))
         
         ### ITEMS RVs ###
-        # Each item has a factor it multiplies L with on diagonal. Inspiration: covar = L D L^t = (L D^0.5) (L D^0.5)ˆt
+        # Each item has a factor it multiplies L with on diagonal. 
+        # Inspiration: covar = L D L^t = (L D^0.5) (L D^0.5)ˆt
         # item_var is the D**2
         item_var = pyro.param("item_var_factor", (torch.rand(self.num_items)+0.5).to(self.device),
                               constraint = constraints.positive)
