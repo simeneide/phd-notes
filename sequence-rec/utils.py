@@ -48,8 +48,8 @@ def compute_bayesian_hitrate(seqrec, seq, num_recs = 20, tau = 6, num_samples = 
     if device is None:
         device = get_device()
     
-    feature_seq = seq[:,:tau]
-    test_seq = seq[:,tau:]
+    feature_seq = seq[:,:tau].to(device)
+    test_seq = seq[:,tau:].to(device)
     
     if num_samples is None:
         num_samples = num_recs
@@ -57,7 +57,7 @@ def compute_bayesian_hitrate(seqrec, seq, num_recs = 20, tau = 6, num_samples = 
     topK_samples = []
     for i in range(num_samples):
         posterior_predictive = seqrec.guide(feature_seq)
-        pp = posterior_predictive(feature_seq)[:,-1]
+        pp = posterior_predictive.predict(feature_seq)[:,-1]
         topK = pp.argsort(dim=1, descending=True)[:,:num_recs] # swap with torch.topk
         topK_samples.append(topK.unsqueeze(2))
 
