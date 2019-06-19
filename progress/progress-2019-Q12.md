@@ -7,6 +7,14 @@
     - if it has a pretrained weight: N(pretrained_val, 0.01)
     - if it does not have a pretrained weight: N(0,0.05)
 
+### Constant parameter for the noClick option
+Had to introduce a separate parameter that captures the average propensity to choose noClick. Otherwise the $z_t \cdot v_i$ part of the model seems to only focus on modelling this and forgetting the fine differences between items.
+
+### Large item norms
+ When I kept the item vectors constant, I managed to get decent results. However, when Ive tried to also train the item parameters it seems to collapse into recommending only a few items no matter what you looked at (the most popular ones it seems). Looking at the model afterwards, I suspect that it is because the norm of those item vectors become large and therefore the score will be high as long as the dot product is positive ( z*v = |v| * z* (v/|v|). Will look into it more, e.g. trying to limit norm of vectors. also suspecting a bug somewhere.
+
+This might be a similar problem to the constant parameter for noClick option.
+
 ### The item-sampling in Stochastic VI
 The optimization algorithm is based on stochastic optimization. However, this is usually done when there is a set of global variables and a set of local variables.
 We also have a set of semi-global variables (the item vectors $v_i$). The item parameters are also subsampled at each step to reduce computation time (there are potentially 4m of them, but only 100k that touches each subsampled likelihood).
