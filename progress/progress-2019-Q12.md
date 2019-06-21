@@ -1,3 +1,30 @@
+# Todo 21 june and forward
+
+- inspect functioning model
+- write paper properly
+- implement model in production
+- Understand stochastic variational inference
+
+# Convergence breakthrough 21 june
+
+Tried to tune model with multiple hyperparameters, tuning learning rate, prior scales etc. In the end, I added a tanh(v_i) to all item vectors elementwise as I suspected they exploded during training (some of the elements in some runs were above 100).
+Ive used this trick before, and it seems to have a very good regularizing effect.
+- In this run I am also *sampling all items in data batch*, to avoid any bias. Did not seem to make any significantly longer time.
+- Trained on 5 days of data, noClick is subsampled so that only 20% of the clicks remains.
+- This model was not allowed to finish converge properly. trained for approx 1 day.
+- Example run:
+
+![](assets/2019-06-21-16-12-24.png)
+
+- I have a exploration-factor that I increase further down the rows. This is done by multiplying each posterior Normal element by a factor to the scale $N(mu, sigma * ef)$, $ef \in [0, 2]$.
+- Note that it keeps recommending cars a couple of steps before switching to boats!
+
+Different average posterior stats:
+- avg(abs(gru.weight_ih_l0)): N(0.28,0.15^2)
+- avg(abs(gru.weight_hh_l0)): N(0.19,0.11^2)
+- avg(abs(head_user.weight)): N(0.16,0.01^2)
+
+
 # Between trondheim and 19 june
 - Rewritten the paper to not be an amortized thingee, but rather an actual bayesian RNN.
 - Some discussions interally with finn about publishing the dataset. Positive feedback from privacy stakeholders in finn, we should go ahead on this(!).
