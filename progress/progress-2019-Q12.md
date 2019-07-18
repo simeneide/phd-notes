@@ -1,3 +1,22 @@
+# Experiment 18 july: Different sampling strategies
+
+### Hitrate@100:  
+For each user (in test set) at a given time (t=10), make top 100 recommendations with the algorithm. The hitset is the intersection between top100 recommendations and suceeding clicks of the user ${a_{10}^u(1:100)}\bigcap C_{11:\tau_u}^u$. Hitrate is defined as the length of the hitset divided by the length of the suceeding clicks $C_{11:\tau_u}^u$. The hitrate of a sample of users is the sum of hits divided by sum of succeeding clicks.
+
+## Candidate sampling
+Our model is predicting click rates given action $P(C | a_t^u(\rho))$. Part this idea is that the slates shown gives us relative performance of a slate compared to the one clicked. In litterature elsewhere, $a_t^u(\rho)$ is not known and approximations are done through candidate sampling. Two baselines includes random sampling (take a random set of all item indexes), and popularity (sample each item with probability proportional to number of times it has been clicked in dataset).
+
+The performance on hitrate was random-sampling (26%), popular-sampling (17%) and actual-"sampling" (13%). This is a rather surprising result.
+
+Plot on performance over training iterations for the three different algorithms:
+![](assets/2019-07-18-11-39-03.png)
+
+## Analysis
+
+Why is it so?
+- We know the relative difference between seen and clicked, but when shown 100 items from same category, it is more likely he's interested in one of the 100 than the other 4m. "actual"-sampling does not take this into account
+- Is the model too poor to distinguish between the "hard samples", and using random samples makes optimization better? If so, could it help to first train with random sampling and then using the actual to fine tune optimization only in the later stages?
+
 # Todo 21 june and forward
 
 - inspect functioning model
