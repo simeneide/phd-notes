@@ -1,2 +1,10 @@
 .ipynb_checkpoint*
 # leave out notebooks for now
+*pycache*
+core*
+*.zip
+*.dat
+*.csv
+*.ckpt
+events.out.tfevents*
+ludewig/
