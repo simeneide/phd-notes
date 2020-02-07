@@ -71,19 +71,229 @@ class Model(simulator.PyroRecommender):
         self.gamma = PyroSample( dist.Normal(torch.tensor(0.5),torch.tensor(0.5)) )
         self.mult = torch.tensor(2.0)
 
-    def init_set_of_real_parameters(self):
+    def init_set_of_real_parameters(self, seed = 1):
+        #torch.manual_seed(seed)
         par_real = {}
-        cnter = 2 * 3.14 * torch.arange(0, self.num_groups) / self.num_groups
-        groupvec = torch.cat(
-                    (torch.cos(cnter).view(-1, 1), torch.sin(cnter).view(-1, 1)),
-                    dim=1)
-        #groupvec = torch.tensor([[1, 0], [0, 1], [-1, 0], [0, -1]])
+
+        groupvec = generate_random_points_on_d_surface(
+            d=self.item_dim, 
+            num_points=self.num_groups, 
+            radius=1,
+            max_angle=3.14)
+            
         par_real['item_model.groupvec.weight'] = groupvec
-        cnter = 2 * 3.14 * torch.arange(0, self.num_items) / self.num_items * self.num_groups
-        locpos = torch.cat(
-            (torch.cos(cnter).view(-1, 1), torch.sin(cnter).view(-1, 1)),
-            dim=1)
-        V = groupvec[self.item_group] + 0.3 * locpos
+
+        # Get item vector placement locally inside the group cluster
+        V_loc = generate_random_points_on_d_surface(
+            d=self.item_dim, 
+            num_points=self.num_items,
+            radius=1,
+            max_angle=3.14)
+
+        V = (groupvec[self.item_group] + 0.1 * V_loc)
+
+        # Special items 0 and 1 is in middle:
+        V[:2, :] = 0
+
+        par_real['item_model.itemvec.weight'] = V
+
+        par_real['gamma'] = torch.tensor(0.99)
+
+        # Set user initial conditions to specific groups:
+        user_init = (torch.arange(self.num_users) //
+                        (self.num_users / self.num_groups)).long()
+
+        par_real['h0'] = groupvec[user_init]
+        #tr = poutine.trace(
+        #    self).get_trace(batch=batch)
+        #for node, obj in tr.iter_stochastic_nodes():
+        #    if par_real.get(node) is None:
+        #        print(node, "\t", obj['value'].size())
+
+
+        self.par_real = par_real
+
+    def get_real_par(self, batch):
+
+        """ Function that outputs a set of real parameters, including setting h0-batch which is batch specific"""
+        out = self.par_real
+        out['h0-batch'] = self.par_real["h0"][batch['userId']]
+        return out
+
+    def forward(self, batch, mode = "likelihood"):
+        click_seq = batch['click']
+        action_ids = batch['action']
+        target_idx = batch['click_idx']
+        time_mask = (batch['click'] != 0)*(batch['click'] != 2).float()
+        userIds = batch['userId']
+        lengths = (action_ids != 0).long().sum(-1)
+
+        t_maxclick = click_seq.size()[1]
+        batch_size, t_maxaction, maxlen_slate = action_ids.size()
+        assert t_maxclick == t_maxaction, "click and action tensors much be of equal time length"
+        # sample item dynamics
+        itemvec = self.item_model()
+        click_vecs = itemvec[click_seq]
+        action_vecs = itemvec[action_ids]
+        # Sample user dynamic parameters:
+        gamma = self.gamma
+        with pyro.plate("data", size = self.num_users, subsample = userIds):
+
+            ## USER PROFILE
+            # container for all hidden states:
+            H = torch.zeros( (batch_size, t_maxclick+1, self.hidden_dim))
+
+            # Sample initial hidden state of users:
+            h0 = pyro.sample("h0-batch", dist.Normal(
+                torch.zeros((batch_size, self.hidden_dim)), torch.ones((batch_size, self.hidden_dim))
+                ).to_event(1)
+                )
+
+            H_list = [h0]
+            for t in range(t_maxclick):
+                h_new = gamma * H_list[-1] + (1-gamma)*click_vecs[:,t]
+                H_list.append(h_new)
+
+            H = torch.cat( [h.unsqueeze(1) for h in H_list], dim =1)
+            Z = H # linear from hidden to Z_t
+
+            # Compute scores for all actions by recommender
+            scores = (Z[:,:t_maxaction].unsqueeze(2) * action_vecs).sum(-1)
+
+            scores = scores*self.mult
+            # PAD MASK: mask scores through neg values for padded candidates:
+            scores[action_ids == 0] = -100
+
+            # SIMULATE
+            # If we want to simulate, then t_maxaction = t_maxclick+1
+            if mode == "simulate":
+                # Check that there are not click in last time step:
+                if bool((time_mask[:,-1] != 0 ).any() ):
+                    warnings.warn("Trying to sample from model, but there are observed clicks in last timestep.")
+                
+                gen_click_idx = dist.Categorical(logits=scores[:, -1, :]).sample()
+                return gen_click_idx
+            
+            if mode == "likelihood":
+                obsdistr = dist.Categorical(logits=scores).mask(time_mask).to_event(1)
+                pyro.sample("obs", obsdistr, obs=target_idx)
+                
+            return {'score' : scores, 'zt' : Z, 'V' : itemvec}
+
+    #@torch.no_grad()
+    @pyro_method
+    def predict(self, batch, t=-1):
+        """
+        Computes scores for each user in batch at time step t.
+        NB: Not scalable for large batch.
+        
+        batch['click_seq'] : tensor.Long(), size = [batch, timesteps]
+        """
+        click_seq = batch['click']
+        batch_size, t_maxclick = click_seq.size()
+        itemvec = self.item_model()
+        click_vecs = itemvec[click_seq]
+        gamma = self.gamma
+        ## USER PROFILE
+        # container for all hidden states:
+        H = torch.zeros( (batch_size, t_maxclick+1, self.hidden_dim))
+
+        # Sample initial hidden state of users:
+        h0 = pyro.sample("h0-batch", dist.Normal(
+            torch.zeros((batch_size, self.hidden_dim)), 0.1*torch.ones((batch_size, self.hidden_dim))
+            ).to_event(1)
+            )
+
+        H[:,0,:] = h0 # set to init condition
+        for t in range(t_maxclick):
+            H[:,t+1,:] = gamma * H[:,t,:] + (1-gamma)*click_vecs[:,t]
+
+        Z = H # linear from hidden to Z_t
+        zt_last = Z[:, t, ]
+
+        score = (zt_last.unsqueeze(1) * itemvec.unsqueeze(0)).sum(-1)
+        return score, H
+
+#%% MODEL GAMMA WITH POSITIVE POLAR COORD
+
+def generate_random_points_on_d_surface(d, num_points, radius, max_angle=3.14, last_angle_factor=2):
+
+    r = torch.ones((num_points,1))*radius
+    angles = torch.rand((num_points, d-1))*max_angle
+    angles[:,-1] = angles[:,-1]*last_angle_factor
+
+    cosvec = torch.cos(angles)
+    cosvec = torch.cat([cosvec, torch.ones((num_points,1))], dim=1)
+
+    sinvec = torch.sin(angles)
+    sinvec = torch.cat([torch.ones((num_points,1)), sinvec], dim=1)
+    sincum = sinvec.cumprod(1)
+
+    X = cosvec * sincum*r
+    return X
+
+def visualize_3d_scatter(dat):
+    import plotly
+    import plotly.graph_objs as go
+    plotly.offline.init_notebook_mode()
+
+    # Configure the trace.
+    trace = go.Scatter3d(
+        x=dat[:,0],  # <-- Put your data instead
+        y=dat[:,1],  # <-- Put your data instead
+        z=dat[:,2],  # <-- Put your data instead
+        mode='markers',
+        marker={
+            'size': 2,
+            'opacity': 0.8,
+        }
+    )
+
+    # Configure the layout.
+    layout = go.Layout(
+        margin={'l': 0, 'r': 0, 'b': 0, 't': 0}
+    )
+
+    data = [trace]
+
+    plot_figure = go.Figure(data=data, layout=layout)
+
+    # Render the plot.
+    plotly.offline.iplot(plot_figure)
+
+class Model_Positive(simulator.PyroRecommender):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+        # Set priors on parameters:
+        self.item_model = ItemHier(**kwargs)
+        self.gamma = PyroSample( dist.Normal(torch.tensor(0.5),torch.tensor(0.5)) )
+        self.mult = torch.tensor(2.0)
+
+    def init_set_of_real_parameters(self, seed = 1):
+        torch.manual_seed(seed)
+        par_real = {}
+
+        groupvec = generate_random_points_on_d_surface(
+            d=self.item_dim, 
+            num_points=self.num_groups, 
+            radius=1,
+            max_angle=3.14/2,
+            last_angle_factor=1)
+            
+        par_real['item_model.groupvec.weight'] = groupvec
+
+        # Get item vector placement locally inside the group cluster
+        V_loc = generate_random_points_on_d_surface(
+            d=self.item_dim, 
+            num_points=self.num_items,
+            radius=1,
+            max_angle=3.14)
+        
+
+        V = (groupvec[self.item_group] + 0.1 * V_loc)
+        # Some of the local balls may be negative, make it positive:
+        V = V.abs()
 
         # Special items 0 and 1 is in middle:
         V[:2, :] = 0
@@ -207,7 +417,6 @@ class Model(simulator.PyroRecommender):
         score = (zt_last.unsqueeze(1) * itemvec.unsqueeze(0)).sum(-1)
         return score, H
 
-#%%
 
 class MeanFieldGuide:
     def __init__(self, model, batch, item_dim, num_users, hidden_dim, **kwargs):

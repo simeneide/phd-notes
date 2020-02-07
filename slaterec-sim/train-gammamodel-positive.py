@@ -16,12 +16,11 @@ item_group = (torch.arange(param['num_items']) //
 itemattr = {'category': item_group.numpy()}
 
 #%%
-param['item_dim'] = 3
-self = model_gamma.Model(**param, item_group = torch.tensor(itemattr['category']))
+self = model_gamma.Model_Positive(**param, item_group = torch.tensor(itemattr['category']))
 
 V = self.par_real['item_model.itemvec.weight']
-#plt.scatter(V[:,0], V[:,1])
-model_gamma.visualize_3d_scatter(self.par_real['item_model.itemvec.weight'])
+plt.scatter(V[:,0], V[:,1])
+#model_gamma.visualize_3d_scatter(self.par_real['item_model.itemvec.weight'])
 #%%
 
 pyro.clear_param_store()
@@ -166,12 +165,12 @@ pyro.clear_param_store()
 #param['num_users'] = num_users
 
 # Generate data
-env = model_gamma.Model(**param, item_group = torch.tensor(itemattr['category']))
+env = model_gamma.Model_Positive(**param, item_group = torch.tensor(itemattr['category']))
 train_sim = simulator.Simulator(**param, env = env)
 ind2val, itemattr, dataloaders, sim = simulator.collect_simulated_data(env, train_sim , policy_epsilon=0.5, **param)
 #%%
 dummybatch = next(iter(dataloaders['train']))
-model = model_gamma.Model(**param, item_group = torch.tensor(itemattr['category']))
+model = model_gamma.Model_Positive(**param, item_group = torch.tensor(itemattr['category']))
 guide = model_gamma.MeanFieldGuide(model = env, batch = dummybatch, **param)
 
 #%% EXPERIMENT PARAMETERS
@@ -180,10 +179,10 @@ print(param)
 from pytorch_lightning import Trainer
 import pytorch_lightning
 system = PyroCoolSystem(param=param, model=model, guide=guide)
-early_stopping = pytorch_lightning.callbacks.EarlyStopping(monitor="loss", patience=50)
+early_stopping = pytorch_lightning.callbacks.EarlyStopping(monitor="val_loss", patience=10)
 from pytorch_lightning.logging import TensorBoardLogger
 # lightning uses tensorboard by default
-tb_logger = TensorBoardLogger("fixh0_results/", name=f"gamma=0.99-gammamodel_num_user={param.get('num_users')}-num_time={param.get('maxlen_time')}-num_items={param.get('num_items')}")
+tb_logger = TensorBoardLogger("test_gamma/", name=f"gammaPositive_num_user={param.get('num_users')}-num_time={param.get('maxlen_time')}-num_items={param.get('num_items')}")
 # most basic trainer, uses good defaults
 trainer = Trainer(early_stop_callback=early_stopping,logger=tb_logger)
 trainer.fit(system)
@@ -192,14 +191,14 @@ trainer.fit(system)
 # %% PLOT OF H0 parameters of users
 h0 = system.guide.get_parameters()['h0-batch']['mean'].detach()
 fig = plt.figure()
-plt.scatter(h0[:,0], h0[:,1])
+plt.scatter(h0[:,0], h0[:,1], alpha = 0.2)
 tb_logger.experiment.add_figure('h0', fig, 0)
 #%%
 
 # %% PLOT OF item vector parameters
-h0 = system.guide.get_parameters()['item_model.itemvec.weight']['mean'].detach()
+V = system.guide.get_parameters()['item_model.itemvec.weight']['mean'].detach()
 fig = plt.figure()
-plt.scatter(h0[:,0], h0[:,1])
+plt.scatter(V[:,0], V[:,1])
 tb_logger.experiment.add_figure('V', fig, 0)
 
 # %% # EVALUATE PERFORMANCE IN SIMULATOR wrt REWARD:
