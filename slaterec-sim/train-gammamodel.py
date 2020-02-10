@@ -16,16 +16,15 @@ item_group = (torch.arange(param['num_items']) //
 itemattr = {'category': item_group.numpy()}
 
 #%%
-param['item_dim'] = 3
+#param['item_dim'] = 2
 self = model_gamma.Model(**param, item_group = torch.tensor(itemattr['category']))
 
 V = self.par_real['item_model.itemvec.weight']
-#plt.scatter(V[:,0], V[:,1])
-model_gamma.visualize_3d_scatter(self.par_real['item_model.itemvec.weight'])
+plt.scatter(V[:,0], V[:,1])
+#model_gamma.visualize_3d_scatter(self.par_real['item_model.itemvec.weight'])
 #%%
 
 pyro.clear_param_store()
-
 
 # VISUALIZE A BATCH OF PATHS
 def visualize_batch(batch):
@@ -53,6 +52,7 @@ from pytorch_lightning.callbacks import EarlyStopping
 from torch.nn import functional as F
 import pyro
 import pyro.distributions as dist
+
 class PyroOptWrap(pyro.infer.SVI):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -160,6 +160,7 @@ class PyroCoolSystem(pl.LightningModule):
         score2prob = lambda s: (s.exp()/s.exp().sum(2,keepdims=True))
         stats['outputs/score-mae'] = (score2prob(res['score'])-score2prob(res_hat['score'])).abs().mean()
         return stats
+
 # %% TRAIN: MODEL+CALLBACKS+TRAINER
 #for num_users in [100,1000]:
 pyro.clear_param_store()
@@ -167,6 +168,7 @@ pyro.clear_param_store()
 
 # Generate data
 env = model_gamma.Model(**param, item_group = torch.tensor(itemattr['category']))
+#%%
 train_sim = simulator.Simulator(**param, env = env)
 ind2val, itemattr, dataloaders, sim = simulator.collect_simulated_data(env, train_sim , policy_epsilon=0.5, **param)
 #%%
@@ -183,23 +185,24 @@ system = PyroCoolSystem(param=param, model=model, guide=guide)
 early_stopping = pytorch_lightning.callbacks.EarlyStopping(monitor="loss", patience=50)
 from pytorch_lightning.logging import TensorBoardLogger
 # lightning uses tensorboard by default
-tb_logger = TensorBoardLogger("fixh0_results/", name=f"gamma=0.99-gammamodel_num_user={param.get('num_users')}-num_time={param.get('maxlen_time')}-num_items={param.get('num_items')}")
+tb_logger = TensorBoardLogger("fixh0_results/", name=f"{param['name']}-gamma=0.99-gammamodel_num_user={param.get('num_users')}-num_time={param.get('maxlen_time')}-num_items={param.get('num_items')}")
 # most basic trainer, uses good defaults
 trainer = Trainer(early_stop_callback=early_stopping,logger=tb_logger)
 trainer.fit(system)
 #%%
 
 # %% PLOT OF H0 parameters of users
+
 h0 = system.guide.get_parameters()['h0-batch']['mean'].detach()
 fig = plt.figure()
-plt.scatter(h0[:,0], h0[:,1])
+plt.scatter(h0[:,0], h0[:,1], c=sim.env.user_init, alpha = 0.2)
 tb_logger.experiment.add_figure('h0', fig, 0)
-#%%
 
 # %% PLOT OF item vector parameters
-h0 = system.guide.get_parameters()['item_model.itemvec.weight']['mean'].detach()
+V = system.guide.get_parameters()['item_model.itemvec.weight']['mean'].detach()
 fig = plt.figure()
-plt.scatter(h0[:,0], h0[:,1])
+plt.scatter(V[:,0], V[:,1], c = sim.env.item_model.item_group)
+
 tb_logger.experiment.add_figure('V', fig, 0)
 
 # %% # EVALUATE PERFORMANCE IN SIMULATOR wrt REWARD:
@@ -208,10 +211,13 @@ g = lambda *args, **kwargs: system.guide(temp = 0.0, *args, **kwargs)
 rec = lambda *args, **kwargs: system.model.recommend(par=g, *args, **kwargs)
 reward_est = sim.play_many_games(rec, 20).mean()
 tb_logger.log_metrics({"reward" : reward_est}, step=1)
+print(reward_est)
+
+env = model_gamma.Model(**param, item_group = torch.tensor(itemattr['category']))
 
 # %% OPTIMAL
 sim = simulator.Simulator(**param, env = env)
-rec = lambda *args, **kwargs: system.model.recommend(par="real", *args, **kwargs)
+rec = lambda *args, **kwargs: env.recommend(par="real", *args, **kwargs)
 sim.play_many_games(rec, 20).mean()
 
 #%% # RANDOM

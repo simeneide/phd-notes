@@ -8,16 +8,15 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import logging
 import pyro.distributions as dist
+import copy
+from torch.utils.data import DataLoader
+from torch.utils.data import Dataset
+import random
 #import model_pyro
 
 #################
 ### DATASET
 #################
-
-from torch.utils.data import DataLoader
-from torch.utils.data import Dataset
-
-import random
 
 class SequentialData(Dataset):
     def __init__(self, capacity, maxlen_time, maxlen_slate, device="cpu"):
@@ -106,7 +105,6 @@ class RandomSystem:
         action = action[:, :(self.maxlen_slate - 1)]
         return action
 
-
 def collect_simulated_data(env, sim, policy_epsilon=0.5, **kwargs):
     randomagent = RandomSystem(num_items=kwargs['num_items'],
                             maxlen_slate=kwargs['maxlen_slate'],
@@ -138,7 +136,7 @@ def collect_simulated_data(env, sim, policy_epsilon=0.5, **kwargs):
     return ind2val, itemattr, dataloaders, sim
 
 
-import copy
+
 
 class Simulator:
     def __init__(
@@ -304,11 +302,13 @@ class PyroRecommender(PyroModule):
         return topk
 
     def visualize_item_space(self):
-        V = self.par_real['item_model.itemvec.weight'].cpu()
-        sns.scatterplot(V[:, 0].cpu(),
-                        V[:, 1].cpu(),
-                        hue=self.item_group.cpu())
-        plt.xlim(-2, 2)
-        plt.ylim(-2, 2)
-        plt.show()
-
+        if self.item_dim ==2:
+            V = self.par_real['item_model.itemvec.weight'].cpu()
+            sns.scatterplot(V[:, 0].cpu(),
+                            V[:, 1].cpu(),
+                            hue=self.item_group.cpu())
+            plt.xlim(-2, 2)
+            plt.ylim(-2, 2)
+            plt.show()
+        if self.item_dim == 3:
+            self.visualize_3d_scatter(self.par_real['item_model.itemvec.weight'])
