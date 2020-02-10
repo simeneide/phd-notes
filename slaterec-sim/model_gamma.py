@@ -69,11 +69,20 @@ class Model(simulator.PyroRecommender):
         # Set priors on parameters:
         self.item_model = ItemHier(**kwargs)
         self.gamma = PyroSample( dist.Normal(torch.tensor(0.5),torch.tensor(0.5)) )
-        self.mult = torch.tensor(2.0)
+        self.softmax_mult = PyroSample( prior = dist.Normal(torch.tensor(1.0), torch.tensor(1.0)))
+        self.bias_noclick = PyroSample( 
+            prior = dist.Normal(
+                torch.zeros((self.maxlen_slate +1,)),
+                torch.ones( (self.maxlen_slate +1,))
+            ))
 
     def init_set_of_real_parameters(self, seed = 1):
-        #torch.manual_seed(seed)
+        torch.manual_seed(seed)
         par_real = {}
+
+        par_real['softmax_mult'] =  torch.tensor(self.softmax_mult).float()
+        par_real['gamma'] = torch.tensor(0.99)
+        par_real['bias_noclick'] = self.bias_noclick * torch.ones( (self.maxlen_slate +1,))
 
         groupvec = generate_random_points_on_d_surface(
             d=self.item_dim, 
@@ -97,13 +106,12 @@ class Model(simulator.PyroRecommender):
 
         par_real['item_model.itemvec.weight'] = V
 
-        par_real['gamma'] = torch.tensor(0.99)
 
         # Set user initial conditions to specific groups:
-        user_init = (torch.arange(self.num_users) //
+        self.user_init = (torch.arange(self.num_users) //
                         (self.num_users / self.num_groups)).long()
 
-        par_real['h0'] = groupvec[user_init]
+        par_real['h0'] = groupvec[self.user_init]
         #tr = poutine.trace(
         #    self).get_trace(batch=batch)
         #for node, obj in tr.iter_stochastic_nodes():
@@ -120,25 +128,21 @@ class Model(simulator.PyroRecommender):
         out['h0-batch'] = self.par_real["h0"][batch['userId']]
         return out
 
-    def forward(self, batch, mode = "likelihood"):
+    def forward(self, batch, mode = "likelihood", t=None):
         click_seq = batch['click']
-        action_ids = batch['action']
-        target_idx = batch['click_idx']
-        time_mask = (batch['click'] != 0)*(batch['click'] != 2).float()
         userIds = batch['userId']
-        lengths = (action_ids != 0).long().sum(-1)
 
-        t_maxclick = click_seq.size()[1]
-        batch_size, t_maxaction, maxlen_slate = action_ids.size()
-        assert t_maxclick == t_maxaction, "click and action tensors much be of equal time length"
+        batch_size, t_maxclick = batch['click'].size()
         # sample item dynamics
         itemvec = self.item_model()
         click_vecs = itemvec[click_seq]
-        action_vecs = itemvec[action_ids]
+
         # Sample user dynamic parameters:
         gamma = self.gamma
-        with pyro.plate("data", size = self.num_users, subsample = userIds):
+        softmax_mult = self.softmax_mult
+        bias_noclick = self.bias_noclick
 
+        with pyro.plate("data", size = self.num_users, subsample = userIds):
             ## USER PROFILE
             # container for all hidden states:
             H = torch.zeros( (batch_size, t_maxclick+1, self.hidden_dim))
@@ -157,15 +161,31 @@ class Model(simulator.PyroRecommender):
             H = torch.cat( [h.unsqueeze(1) for h in H_list], dim =1)
             Z = H # linear from hidden to Z_t
 
-            # Compute scores for all actions by recommender
-            scores = (Z[:,:t_maxaction].unsqueeze(2) * action_vecs).sum(-1)
+            if mode =="predict":
+                "NB: DOES NOT WORK FOR LARGE BATCHES"
+                zt_last = Z[:, t, ]
+                score = (zt_last.unsqueeze(1) * itemvec.unsqueeze(0)).sum(-1)
+                return score, H
 
-            scores = scores*self.mult
+            target_idx = batch['click_idx']
+            time_mask = (batch['click'] != 0)*(batch['click'] != 2).float()
+            lengths = (batch['action'] != 0).long().sum(-1)
+            action_vecs = itemvec[batch['action']]
+
+            # Compute scores for all actions by recommender
+            scores = (Z[:,:t_maxclick].unsqueeze(2) * action_vecs).sum(-1)
+
+            scores = scores*softmax_mult
+
+            # Add a constant based on inscreen length to the no click option:
+            batch_bias = bias_noclick[lengths]
+            batch_bias = (batch['action'][:, :, 0] == 1).float() * batch_bias
+            scores[:,:,0] += batch_bias
             # PAD MASK: mask scores through neg values for padded candidates:
-            scores[action_ids == 0] = -100
+            scores[batch['action'] == 0] = -100
 
             # SIMULATE
-            # If we want to simulate, then t_maxaction = t_maxclick+1
+            # If we want to simulate, then t_maxclick = t_maxclick+1
             if mode == "simulate":
                 # Check that there are not click in last time step:
                 if bool((time_mask[:,-1] != 0 ).any() ):
@@ -189,30 +209,7 @@ class Model(simulator.PyroRecommender):
         
         batch['click_seq'] : tensor.Long(), size = [batch, timesteps]
         """
-        click_seq = batch['click']
-        batch_size, t_maxclick = click_seq.size()
-        itemvec = self.item_model()
-        click_vecs = itemvec[click_seq]
-        gamma = self.gamma
-        ## USER PROFILE
-        # container for all hidden states:
-        H = torch.zeros( (batch_size, t_maxclick+1, self.hidden_dim))
-
-        # Sample initial hidden state of users:
-        h0 = pyro.sample("h0-batch", dist.Normal(
-            torch.zeros((batch_size, self.hidden_dim)), 0.1*torch.ones((batch_size, self.hidden_dim))
-            ).to_event(1)
-            )
-
-        H[:,0,:] = h0 # set to init condition
-        for t in range(t_maxclick):
-            H[:,t+1,:] = gamma * H[:,t,:] + (1-gamma)*click_vecs[:,t]
-
-        Z = H # linear from hidden to Z_t
-        zt_last = Z[:, t, ]
-
-        score = (zt_last.unsqueeze(1) * itemvec.unsqueeze(0)).sum(-1)
-        return score, H
+        return self.forward(batch, t=t, mode = "predict")
 
 #%% MODEL GAMMA WITH POSITIVE POLAR COORD
 
@@ -332,8 +329,8 @@ class Model_Positive(simulator.PyroRecommender):
         lengths = (action_ids != 0).long().sum(-1)
 
         t_maxclick = click_seq.size()[1]
-        batch_size, t_maxaction, maxlen_slate = action_ids.size()
-        assert t_maxclick == t_maxaction, "click and action tensors much be of equal time length"
+        batch_size, t_maxclick, maxlen_slate = action_ids.size()
+        assert t_maxclick == t_maxclick, "click and action tensors much be of equal time length"
         # sample item dynamics
         itemvec = self.item_model()
         click_vecs = itemvec[click_seq]
@@ -361,14 +358,14 @@ class Model_Positive(simulator.PyroRecommender):
             Z = H # linear from hidden to Z_t
 
             # Compute scores for all actions by recommender
-            scores = (Z[:,:t_maxaction].unsqueeze(2) * action_vecs).sum(-1)
+            scores = (Z[:,:t_maxclick].unsqueeze(2) * action_vecs).sum(-1)
 
             scores = scores*self.mult
             # PAD MASK: mask scores through neg values for padded candidates:
             scores[action_ids == 0] = -100
 
             # SIMULATE
-            # If we want to simulate, then t_maxaction = t_maxclick+1
+            # If we want to simulate, then t_maxclick = t_maxclick+1
             if mode == "simulate":
                 # Check that there are not click in last time step:
                 if bool((time_mask[:,-1] != 0 ).any() ):
@@ -416,7 +413,6 @@ class Model_Positive(simulator.PyroRecommender):
 
         score = (zt_last.unsqueeze(1) * itemvec.unsqueeze(0)).sum(-1)
         return score, H
-
 
 class MeanFieldGuide:
     def __init__(self, model, batch, item_dim, num_users, hidden_dim, **kwargs):
