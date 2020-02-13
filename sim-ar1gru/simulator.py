@@ -12,7 +12,8 @@ import copy
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset
 import random
-
+import models
+import agents
 #################
 ### DATASET
 #################
@@ -87,7 +88,7 @@ class SequentialData(Dataset):
         return dataloaders
 
 def collect_simulated_data(env, sim, policy_epsilon=0.5, **kwargs):
-    randomagent = RandomSystem(num_items=kwargs['num_items'],
+    randomagent = agents.RandomSystem(num_items=kwargs['num_items'],
                             maxlen_slate=kwargs['maxlen_slate'],
                             batch_user=kwargs['batch_user'])
 
