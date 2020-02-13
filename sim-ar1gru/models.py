@@ -143,6 +143,7 @@ class Model(agents.PyroRecommender):
             scores[:,:,0] += batch_bias
             # PAD MASK: mask scores through neg values for padded candidates:
             scores[batch['action'] == 0] = -100
+            scores = scores.clamp(-100,20)
 
             # SIMULATE
             # If we want to simulate, then t_maxclick = t_maxclick+1
