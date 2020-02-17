@@ -28,20 +28,22 @@ class Model(agents.PyroRecommender):
 
         # Set priors on parameters:
         self.item_model = ItemHier(**kwargs)
-        self.gamma = PyroSample( dist.Normal(torch.tensor(0.5),torch.tensor(0.5)) )
-        self.softmax_mult = PyroSample( prior = dist.Normal(torch.tensor(1.0), torch.tensor(1.0)))
-        self.bias_noclick = PyroSample( 
+        self.gamma = PyroSample( dist.Normal(torch.tensor(0.5),torch.tensor(0.2)) )
+        self.softmax_mult = 1.0# PyroSample( prior = dist.Normal(torch.tensor(1.0), torch.tensor(1.0)))
+        self.bias_noclick = torch.ones( (self.maxlen_slate +1,))
+        """PyroSample( 
             prior = dist.Normal(
                 torch.zeros((self.maxlen_slate +1,)),
                 torch.ones( (self.maxlen_slate +1,))
             ))
+        """
 
     def init_set_of_real_parameters(self, seed = 1):
         torch.manual_seed(seed)
         par_real = {}
 
         par_real['softmax_mult'] =  torch.tensor(self.softmax_mult).float()
-        par_real['gamma'] = torch.tensor(0.99)
+        par_real['gamma'] = torch.tensor(0.9)
         par_real['bias_noclick'] = self.bias_noclick * torch.ones( (self.maxlen_slate +1,))
 
         groupvec = generate_random_points_on_d_surface(
@@ -88,6 +90,7 @@ class Model(agents.PyroRecommender):
         out['h0-batch'] = self.par_real["h0"][batch['userId']]
         return out
 
+
     def forward(self, batch, mode = "likelihood", t=None):
         click_seq = batch['click']
         userIds = batch['userId']
@@ -98,7 +101,7 @@ class Model(agents.PyroRecommender):
         click_vecs = itemvec[click_seq]
 
         # Sample user dynamic parameters:
-        gamma = self.gamma
+        gamma = self.gamma#.clamp(0,1)
         softmax_mult = self.softmax_mult
         bias_noclick = self.bias_noclick
 
@@ -121,14 +124,18 @@ class Model(agents.PyroRecommender):
             H = torch.cat( [h.unsqueeze(1) for h in H_list], dim =1)
             Z = H # linear from hidden to Z_t
 
+
+            # NB: DOES NOT WORK FOR LARGE BATCHES:
             if mode =="predict":
-                "NB: DOES NOT WORK FOR LARGE BATCHES"
+                
                 zt_last = Z[:, t, ]
                 score = (zt_last.unsqueeze(1) * itemvec.unsqueeze(0)).sum(-1)
                 return score, H
 
             target_idx = batch['click_idx']
-            time_mask = (batch['click'] != 0)*(batch['click'] != 2).float()
+
+
+
             lengths = (batch['action'] != 0).long().sum(-1)
             action_vecs = itemvec[batch['action']]
 
@@ -149,14 +156,23 @@ class Model(agents.PyroRecommender):
             # If we want to simulate, then t_maxclick = t_maxclick+1
             if mode == "simulate":
                 # Check that there are not click in last time step:
-                if bool((time_mask[:,-1] != 0 ).any() ):
+                if bool((batch['click'][:,-1] != 0 ).any() ):
                     warnings.warn("Trying to sample from model, but there are observed clicks in last timestep.")
                 
                 gen_click_idx = dist.Categorical(logits=scores[:, -1, :]).sample()
                 return gen_click_idx
             
             if mode == "likelihood":
-                obsdistr = dist.Categorical(logits=scores).mask(time_mask).to_event(1)
+                # MASKING
+                time_mask = (batch['click'] != 0)*(batch['click'] != 2).float()
+                if self.trainmode:
+                    phase_mask = batch['mask_train']
+                else:
+                    phase_mask = 1-batch['mask_train']
+                mask = phase_mask * time_mask
+
+
+                obsdistr = dist.Categorical(logits=scores).mask(mask).to_event(1)
                 pyro.sample("obs", obsdistr, obs=target_idx)
                 
             return {'score' : scores, 'zt' : Z, 'V' : itemvec}
@@ -238,10 +254,21 @@ class MeanFieldGuide:
                     posterior[node] = pyro.sample(
                         node,
                         dist.Normal(mean[batch['userId']], temp*scale[batch['userId']]).to_event(1))
+            elif node == "gamma":
+                mean = pyro.param(f"{node}-mean",
+                                    init_tensor= 0.01*par.detach().clone(),
+                                    constraint=constraints.interval(0,0.98))
+                scale = pyro.param(f"{node}-scale",
+                                    init_tensor=0.0001 +
+                                    0.0 * par.detach().clone().abs(),
+                                    constraint=constraints.interval(0,0.001))
+                posterior[node] = pyro.sample(
+                    node,
+                    dist.Normal(mean, temp*scale).independent())
 
             else:
                 mean = pyro.param(f"{node}-mean",
-                                    init_tensor= 0.05*par.detach().clone())
+                                    init_tensor= 0.01*par.detach().clone())
                 scale = pyro.param(f"{node}-scale",
                                     init_tensor=0.05 +
                                     0.01 * par.detach().clone().abs(),
@@ -259,7 +286,6 @@ class MeanFieldGuide:
             mean = pyro.param(f"{node}-mean", init_tensor=par.detach().clone())
             posterior[node] = mean
 
-        posterior['user_noise'] = 0
         return posterior
 
     def get_parameters(self):
@@ -294,32 +320,3 @@ def generate_random_points_on_d_surface(d, num_points, radius, max_angle=3.14, l
 
     X = cosvec * sincum*r
     return X
-
-def visualize_3d_scatter(dat):
-    import plotly
-    import plotly.graph_objs as go
-    plotly.offline.init_notebook_mode()
-
-    # Configure the trace.
-    trace = go.Scatter3d(
-        x=dat[:,0],  # <-- Put your data instead
-        y=dat[:,1],  # <-- Put your data instead
-        z=dat[:,2],  # <-- Put your data instead
-        mode='markers',
-        marker={
-            'size': 2,
-            'opacity': 0.8,
-        }
-    )
-
-    # Configure the layout.
-    layout = go.Layout(
-        margin={'l': 0, 'r': 0, 'b': 0, 't': 0}
-    )
-
-    data = [trace]
-
-    plot_figure = go.Figure(data=data, layout=layout)
-
-    # Render the plot.
-    plotly.offline.iplot(plot_figure)

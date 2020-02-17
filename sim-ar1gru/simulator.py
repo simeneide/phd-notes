@@ -14,68 +14,90 @@ from torch.utils.data import Dataset
 import random
 import models
 import agents
+
+def collect_simulated_data(sim, policy_epsilon=0.5, **kwargs):
+    randomagent = agents.RandomSystem(num_items=kwargs['num_items'],
+                                      maxlen_slate=kwargs['maxlen_slate'])
+
+    def policy_epsilon_greedy(policy_epsilon=policy_epsilon, *args, **kwargs):
+        if random.random() < policy_epsilon:
+            return sim.env.recommend(*args, **kwargs)
+        else:
+            return randomagent.recommend(*args, **kwargs)
+
+    # Build training data:
+    logging.info(
+        f"Simulating data: num users: {kwargs['num_users']}, optimal games: {policy_epsilon}*100%"
+    )
+    sim.generate_dataset(policy_epsilon_greedy)
+
+    itemattr = {'category': sim.env.item_group.numpy()}
+    dataloaders = sim.build_dataloaders(**kwargs)
+
+    ind2val = {
+        'itemId': {key: str(key)
+                   for key in range(kwargs['num_items'])},
+        'userId':
+        {key: str(key)
+         for key in sim.data['userId'].numpy()}
+    }
+
+    return ind2val, itemattr, dataloaders, sim
+
+
 #################
-### DATASET
+### SIMULATOR-DATASET
 #################
 
-class SequentialData(Dataset):
-    def __init__(self, capacity, maxlen_time, maxlen_slate, device="cpu"):
+
+class Simulator(Dataset):
+    def __init__(self, **kwargs):
+        defaults = {
+            'num_users' : None,
+            'num_items' : None,
+            'batch_size' : 128,
+            'env' : None,
+            'maxlen_time' : None,
+            'maxlen_slate' : None,
+            'device' : "cpu",
+            }
+        # Register all input vars in module:
+        for key, val in defaults.items():
+            setattr(self,key, kwargs.get(key, val))
+
         with torch.no_grad():
-            self.capacity = capacity
-            self.maxlen_time = maxlen_time
-            self.maxlen_slate = maxlen_slate
-            self.device = device
-
-            self.cur_size = 0  # how big is dataset now
             self.pos = 0  # counter when adding
 
             self.data = {
-                'userId' : torch.arange(self.capacity),
+                'userId':
+                torch.arange(self.num_users),
                 'action':
-                torch.zeros((self.capacity, maxlen_time,
-                             maxlen_slate)).long().to(self.device),
+                torch.zeros((self.num_users, self.maxlen_time,
+                             self.maxlen_slate)).long().to(self.device),
                 'click':
-                torch.zeros((self.capacity, maxlen_time)).long().to(self.device),
+                torch.zeros(
+                    (self.num_users, self.maxlen_time)).long().to(self.device),
                 'click_idx':
-                torch.zeros((self.capacity, maxlen_time)).long().to(self.device)
+                torch.zeros(
+                    (self.num_users, self.maxlen_time)).long().to(self.device)
             }
 
+    ## DATASET FUNCTIONS
     def __len__(self):
-        return min(self.cur_size, self.capacity)
+        return self.num_users
 
     def __getitem__(self, idx):
         return {key: val[idx, ] for key, val in self.data.items()}
 
-    def push(self, ep_data):
-        """ Saves a episode of batch of users to the dataset """
-        with torch.no_grad():
-            bs = len(ep_data['click'])
-            start = self.pos
-            end = (self.pos + bs)
-
-            # If at end of batch, clip first steps of episode:
-            if end >= self.capacity:
-                avail = self.capacity - start
-                for key, val in ep_data.items():
-                    ep_data[key] = ep_data[key][-avail]
-                end = self.capacity
-
-            for key, val in ep_data.items():
-                self.data[key][start:end, ] = ep_data[key].float().to(
-                    self.device)
-
-            self.cur_size += bs
-            self.pos = (self.pos + bs) % self.capacity
-
-    def build_dataloaders(self, batch_size=512, split_trainvalid=0.95):
+    def build_dataloaders(self, batch_size=512, num_testusers =100, t_testsplit=10, **kwargs):
         torch.manual_seed(0)
-        tl = int(len(self) * split_trainvalid)
+        perm_user = torch.randperm(self.num_users)
+        valid_user_idx = perm_user[:num_testusers]
+        train_user_idx = perm_user[num_testusers:]
+        self.data['mask_train'] = torch.ones_like(self.data['click'])
+        self.data['mask_train'][valid_user_idx, t_testsplit:] = 0
 
-        subsets = torch.utils.data.random_split(dataset=self,
-                                                lengths=[tl,
-                                                         len(self) - tl])
-
-        subsets = {'train': subsets[0], 'valid': subsets[1]}
+        subsets = {'train': self, 'valid': torch.utils.data.Subset(self, valid_user_idx)}
         dataloaders = {
             phase: DataLoader(ds, batch_size=batch_size, shuffle=True)
             for phase, ds in subsets.items()
@@ -87,131 +109,65 @@ class SequentialData(Dataset):
 
         return dataloaders
 
-def collect_simulated_data(env, sim, policy_epsilon=0.5, **kwargs):
-    randomagent = agents.RandomSystem(num_items=kwargs['num_items'],
-                            maxlen_slate=kwargs['maxlen_slate'],
-                            batch_user=kwargs['batch_user'])
+    ## SIMULATOR FUNCTIONS
+    def reset(self, userIds = None, t_start = 0):
+        if userIds is None:
+            userIds = self.data['userId'][:self.batch_size]
 
-    def policy_epsilon_greedy(policy_epsilon=policy_epsilon, *args, **kwargs):
-        if random.random()<policy_epsilon:
-            return env.recommend(*args, **kwargs)
-        else:
-            return randomagent.recommend(*args, **kwargs)
-
-    num_games = int(kwargs['num_users']/kwargs['batch_user'])
-    # Build training data:
-    logging.info(f"Simulating data: num users: {kwargs['num_users']}, optimal games: {policy_epsilon}*100%")
-    reward_opt = sim.play_many_games(policy_epsilon_greedy,
-                        num_games=num_games).mean()
-
-    itemattr = {'category': env.item_group.numpy()}
-    dataloaders = sim.dataset.build_dataloaders(
-        batch_size=kwargs['batch_size'])
-
-    ind2val = {
-        'itemId': {key: str(key)
-                   for key in range(kwargs['num_items'])},
-        'userId' : {key : str(key) for key in sim.dataset.data['userId'].numpy()}
-    }
-
-
-    return ind2val, itemattr, dataloaders, sim
-
-
-#################
-### SIMULATOR
-#################
-
-class Simulator:
-    def __init__(
-        self,
-        num_items,
-        num_users,
-        batch_user,
-        maxlen_time,
-        maxlen_slate,
-        env=None,
-        device="cpu",
-        # DATA HANDLING
-        **kwargs):
-
-        self.device = device
-        self.maxlen_time = maxlen_time
-        self.num_items = num_items
-        self.num_users = num_users
-        self.batch_user = batch_user
-        self.maxlen_slate = maxlen_slate
-        self.env = env
-        self.dataset = SequentialData(capacity=num_users,
-                                      maxlen_time=maxlen_time,
-                                      maxlen_slate=maxlen_slate)
-        self.user_iter = 0
-
-    ## GAME FUNCTIONS ###
-    def reset(self):
-        """Reset game"""
-        self.t = 0
-        user_endidx = self.user_iter+self.batch_user
-        if user_endidx > self.num_users:
-            logging.info("All users interacted with!")
-            return None
-        self.episode_data = {
-            'action':
-            torch.zeros(
-                (self.batch_user, self.maxlen_time, self.maxlen_slate)).to(self.device).long(),
-            'click':
-            torch.zeros((self.batch_user, self.maxlen_time)).to(self.device).long(),
-            'click_idx':
-            torch.zeros((self.batch_user, self.maxlen_time)).to(self.device).long(),
-            'userId' : torch.arange(start=self.user_iter, end = user_endidx)
-        }
-
-        self.user_iter += self.batch_user
+        self.batch_user = userIds
+        self.t= t_start
         return self.return_data()
 
     def return_data(self, t=None):
         if t is None:
             t = self.t
-        dat = {key: val[:, :t] for key, val in self.episode_data.items() if key != "userId"}
-        dat['userId'] = self.episode_data['userId']
+
+        dat = {
+            key: val[self.batch_user, :t]
+            for key, val in self.data.items() if key != "userId"
+        }
+        dat['userId'] = self.data['userId'][self.batch_user,]
         return dat
 
     def step(self, action):
-        """ Takes an action from policy, evaluates and returns click/reward"""
+        """Takes an action from policy, evaluates and returns click/reward"""
         done = False
-        # Concat the no click option as an alternative
+        
         action = action.long().to(self.device)
-        self.episode_data['action'][:, self.t] = torch.cat(
-            (torch.ones(self.batch_user, 1).to(self.device).long(), action), dim=1)
-        action = self.episode_data['action'][:, self.t]
+        # Concat the no click option as an alternative:
+        noclick = torch.ones_like(self.batch_user).unsqueeze(1).long().to(self.device)
+        self.data['action'][self.batch_user, self.t] = torch.cat( (noclick, action), dim=1)
+        action = self.data['action'][self.batch_user, self.t]
 
         # Let environment sample click or no click:
-        self.episode_data['click_idx'][:, self.t] = self.env.simulate(
-            batch=self.return_data(t=self.t + 1) ).to(self.device)
-        self.episode_data['click'][:, self.t] = self.episode_data[
-            'action'][:, self.t].gather(
-                -1, self.episode_data['click_idx'][:, self.t].unsqueeze(
+        self.data['click_idx'][self.batch_user, self.t] = self.env.simulate(
+            batch=self.return_data(t=self.t + 1)).to(self.device)
+
+        self.data['click'][self.batch_user, self.t] = self.data[
+            'action'][self.batch_user, self.t].gather(
+                -1, self.data['click_idx'][self.batch_user, self.t].unsqueeze(
                     -1)).squeeze()
-        reward = (self.episode_data['click'][:, self.t] >= 2).float().mean()
+        reward = (self.data['click'][self.batch_user, self.t] >= 2).float().mean()
 
         self.t += 1
 
         if self.t == self.maxlen_time:
-            self.dataset.push(copy.deepcopy(self.episode_data))
             done = True
 
         return self.return_data(), reward, done
 
-    def play_game(self, agent_rec_func):
+    def play_game(self, agent_function, userIds = None, t_end = None):
         """ Play a full game with a given environment function and a given agent function"""
-
+        if t_end is None:
+            t_end = self.maxlen_time
         # Sample U_b users with no interactions:
-        batch = self.reset()
+        batch = self.reset(userIds=userIds)
 
-        reward = torch.zeros((self.maxlen_time, ))
-        for t in range(self.maxlen_time):
+        reward = torch.zeros((t_end, ))
+        for t in range(t_end):
             # Let agent recommend:
-            action = agent_rec_func(batch=batch, max_rec=self.maxlen_slate - 1).to(self.device)
+            action = agent_function(batch=batch, max_rec=self.maxlen_slate -
+                                    1).to(self.device)
             #print(action)
             # Let environment generate a click and return an updated user history
             batch, reward[t], done = self.step(action)
@@ -219,11 +175,10 @@ class Simulator:
                 return reward
         return reward  # return avg cum reward
 
-    def play_many_games(self, agent_rec_func, num_games=1):
-        reward = torch.zeros((num_games))
-        for t in range(num_games):
-            reward[t] = self.play_game(agent_rec_func).mean()
-
-        return reward
+    def generate_dataset(self, agent_function, t_end=None):
+        for userIds in chunker(self.data['userId'], size=self.batch_size):
+            self.play_game(agent_function, t_end = t_end, userIds = userIds)
 
 
+def chunker(seq, size):
+    return (seq[pos:pos + size] for pos in range(0, len(seq), size))

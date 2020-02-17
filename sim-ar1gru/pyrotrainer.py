@@ -35,7 +35,7 @@ class PyroTrainer:
             model=self.model,
             guide=self.guide,
             optim=pyro.optim.Adam({"lr": lr}),
-            loss=pyro.infer.Trace_ELBO())
+            loss=pyro.infer.TraceMeanField_ELBO())
         return True
 
     def training_step(self, batch):
@@ -120,6 +120,7 @@ class RecTrainer(PyroTrainer):
         super().__init__(**kwargs)
 
     def training_step(self, batch):
+        self.model.train()
         loss = self.svi.step(batch)
         stats = self.calc_stats(batch)
         stats['loss'] = loss
@@ -127,6 +128,7 @@ class RecTrainer(PyroTrainer):
 
     @torch.no_grad()
     def validation_step(self, batch):
+        self.model.eval()
         loss = self.svi.evaluate_loss(batch)
         stats = self.calc_stats(batch)
         stats['loss'] = loss
