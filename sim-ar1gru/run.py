@@ -7,11 +7,7 @@ import pyro
 import logging
 import simulator
 import torch
-import pytorch_lightning as pl
 import matplotlib.pyplot as plt
-from pytorch_lightning import Trainer, logging
-from pytorch_lightning.logging import TensorBoardLogger
-from pytorch_lightning.callbacks import EarlyStopping
 from torch.nn import functional as F
 import pyro
 import pyro.distributions as dist
@@ -26,31 +22,46 @@ itemattr = {'category': item_group.numpy()}
 # %% TRAIN: MODEL+CALLBACKS+TRAINER
 pyro.clear_param_store()
 env = models.Model(**param, item_group=torch.tensor(itemattr['category']))
-#env.visualize_item_space()
-
-#%%
 sim = simulator.Simulator(**param, env=env)
-#%%
 ind2val, itemattr, dataloaders, sim = simulator.collect_simulated_data(
     sim, policy_epsilon=0.5, **param)
 
 #%%
+pyro.clear_param_store()
 import pyrotrainer
 dummybatch = next(iter(dataloaders['train']))
 model = models.Model(**param, item_group=torch.tensor(itemattr['category']))
 guide = models.MeanFieldGuide(model=env, batch=dummybatch, **param)
 #%%
-self = model
-batch = dummybatch
+from pyro import poutine
+tr = poutine.trace(
+    model).get_trace(batch=dummybatch)
+
+guide_tr = poutine.trace(
+    guide).get_trace(batch=dummybatch)  
+for node, obj in tr.iter_stochastic_nodes():
+    if model.par_real.get(node) is None:
+        print(node, "\t", obj['value'].size())
 
 #%%
-
+"""
+import torch.distributions.constraints as constraints
+pyro.clear_param_store()
+for key, val in model.par_real.items():
+    pyro.param(f"{key}-mean", val)
+    pyro.param(f"{key}-scale", 0.00001+torch.zeros_like(val), constraint=constraints.interval(0,0.1))
+    print(key)
+"""
+#%%
 trainer = pyrotrainer.RecTrainer(model=model,
                                  guide=guide,
-                                 max_epoch=5000,
+                                 max_epoch=1000,
                                  name=param['name'],
                                  param=param,
                                  patience=param['patience'],
                                  learning_rate=param['learning_rate'])
+#%%
 trainer.fit(dataloaders)
+
+
 # %%

@@ -6,7 +6,6 @@ import pyro
 import logging
 import simulator
 import torch
-import pytorch_lightning as pl
 import matplotlib.pyplot as plt
 from torch.nn import functional as F
 import pyro
@@ -14,16 +13,16 @@ import pyro.distributions as dist
 import os
 from torch.utils.tensorboard import SummaryWriter
 logging.basicConfig(format='%(asctime)s %(message)s', level='INFO')
-
+from pyro import poutine
 class PyroTrainer:
-    def __init__(self, model, guide, learning_rate = 1e-2, max_epoch=100, param=None, **kwargs):
+    def __init__(self, model, guide, learning_rate = 1e-2, max_epoch=100, param=None,report_param_histogram=False, **kwargs):
         self.model = model
         self.guide = guide
         self.learning_rate = learning_rate
         self.max_epoch  = max_epoch
         self.param = param
-
-        self.init_opt(self.learning_rate)
+        self.report_param_histogram = report_param_histogram
+        self.init_opt(lr=self.learning_rate)
         self.step = 0 # global step counter (counts datapoints)
     
         self.earlystop = EarlyStoppingAndCheckpoint(**kwargs)
@@ -65,8 +64,10 @@ class PyroTrainer:
         if phase == "train":
             # Report all parameters
             for name, par in pyro.get_param_store().items():
-                self.writer.add_histogram(tag=f"param/{name}", values=par, global_step=self.step)
                 self.writer.add_scalar(tag=f"param/{name}-l1", scalar_value = par.abs().mean(), global_step = self.step)
+                if self.report_param_histogram:
+                    self.writer.add_histogram(tag=f"param/{name}", values=par, global_step=self.step)
+                
 
     def end_of_training(self, *args, **kwargs):
         pass
@@ -149,6 +150,17 @@ class RecTrainer(PyroTrainer):
         # report stats on batch:
         stats = {f"{key}-L1" : val.abs().mean() for key,val in res_hat.items()}
         stats['prob-mae'] = (res['prob']-res_hat['prob_hat']).abs().mean()
+
+        ## LIKELIHOODS
+        guide_tr = poutine.trace(self.guide).get_trace(batch)
+        with poutine.replay(trace=guide_tr), torch.no_grad():
+            model_trace = poutine.trace(self.model).get_trace(batch)
+            model_trace.compute_log_prob()
+            stats['neglog_lik'] = -model_trace.nodes['obs']['log_prob_sum']
+            stats['neglog_totprob'] = -model_trace.log_prob_sum().item()
+            stats[
+                'neglog_prior'] = stats['neglog_totprob'] - stats['neglog_lik']
+
         return stats
 
     def end_of_training(self):
@@ -157,17 +169,19 @@ class RecTrainer(PyroTrainer):
         self.writer.add_hparams(hparam_dict=self.param, metric_dict=self.epoch_log[-1])
 
         # Visualize item vectors:
-        # %% PLOT OF H0 parameters of users
-        h0 = self.guide.get_parameters()['h0-batch']['mean'].detach()
-        fig = plt.figure()
-        plt.scatter(h0[:,0], h0[:,1], c=self.model.user_init, alpha = 0.2)
-        self.writer.add_figure('h0', fig, 0)
 
         # %% PLOT OF item vector parameters
         V = self.guide.get_parameters()['item_model.itemvec.weight']['mean'].detach()
         fig = plt.figure()
         plt.scatter(V[:,0], V[:,1], c = self.model.item_model.item_group)
         self.writer.add_figure('V', fig, 0)
+
+        # %% PLOT OF H0 parameters of users
+        h0 = pyro.param("h0-mean").detach() #self.guide.get_parameters()['h0-batch']['mean'].detach()
+        fig = plt.figure()
+        plt.scatter(h0[:,0], h0[:,1], c=self.model.user_init, alpha = 0.1)
+        self.writer.add_figure('h0', fig, 0)
+
 
 class EarlyStoppingAndCheckpoint:
     def __init__(self, patience = 1, save_dir="checkpoints", **kwargs):
