@@ -29,14 +29,12 @@ class Model(agents.PyroRecommender):
         # Set priors on parameters:
         self.item_model = ItemHier(**kwargs)
         self.gamma = PyroSample( dist.Normal(torch.tensor(0.5),torch.tensor(0.2)) )
-        self.softmax_mult = 1.0# PyroSample( prior = dist.Normal(torch.tensor(1.0), torch.tensor(1.0)))
-        self.bias_noclick = torch.ones( (self.maxlen_slate +1,))
-        """PyroSample( 
+        self.softmax_mult = self.softmax_mult # PyroSample( prior = dist.Normal(torch.tensor(1.0), torch.tensor(1.0)))
+        self.bias_noclick = PyroSample(
             prior = dist.Normal(
                 torch.zeros((self.maxlen_slate +1,)),
-                torch.ones( (self.maxlen_slate +1,))
+                5*torch.ones( (self.maxlen_slate +1,))
             ))
-        """
 
     def init_set_of_real_parameters(self, seed = 1):
         torch.manual_seed(seed)
@@ -53,6 +51,8 @@ class Model(agents.PyroRecommender):
             max_angle=3.14)
             
         par_real['item_model.groupvec.weight'] = groupvec
+
+        par_real['item_model.groupscale.weight'] = torch.ones_like(groupvec)*0.1
 
         # Get item vector placement locally inside the group cluster
         V_loc = generate_random_points_on_d_surface(
@@ -74,12 +74,6 @@ class Model(agents.PyroRecommender):
                         (self.num_users / self.num_groups)).long()
 
         par_real['h0'] = groupvec[self.user_init]
-        #tr = poutine.trace(
-        #    self).get_trace(batch=batch)
-        #for node, obj in tr.iter_stochastic_nodes():
-        #    if par_real.get(node) is None:
-        #        print(node, "\t", obj['value'].size())
-
 
         self.par_real = par_real
 
@@ -112,7 +106,7 @@ class Model(agents.PyroRecommender):
 
             # Sample initial hidden state of users:
             h0 = pyro.sample("h0-batch", dist.Normal(
-                torch.zeros((batch_size, self.hidden_dim)), torch.ones((batch_size, self.hidden_dim))
+                torch.zeros((batch_size, self.hidden_dim)), self.prior_userinit_scale*torch.ones((batch_size, self.hidden_dim))
                 ).to_event(1)
                 )
 
@@ -169,7 +163,7 @@ class Model(agents.PyroRecommender):
                     phase_mask = batch['mask_train']
                 else:
                     phase_mask = 1-batch['mask_train']
-                mask = phase_mask * time_mask
+                mask = time_mask*phase_mask
 
 
                 obsdistr = dist.Categorical(logits=scores).mask(mask).to_event(1)
@@ -200,6 +194,10 @@ class ItemHier(PyroModule):
         self.hidden_dim = item_dim if hidden_dim == None else hidden_dim
         self.num_items = num_items
         self.device = device
+        self.prior_groupvec_scale = kwargs.get('prior_groupvec_scale', 0.2)
+        self.prior_groupscale_scale = kwargs.get('prior_groupscale_scale', 0.2)
+
+        logging.info(f"Initializing itemHier with groupvec ~ N(0, {self.prior_groupvec_scale}), groupscale ~ N(0, {self.prior_groupscale_scale})")
 
         # Group-vec:
         self.item_group = item_group
@@ -209,13 +207,19 @@ class ItemHier(PyroModule):
         self.groupvec = PyroModule[nn.Embedding](num_embeddings=self.num_group,
                                                  embedding_dim=self.item_dim)
         self.groupvec.weight = PyroSample(
-            dist.Normal(torch.zeros_like(self.groupvec.weight),
-                        torch.ones_like(self.groupvec.weight)).to_event(2))
+            dist.Normal(
+                torch.zeros_like(self.groupvec.weight),
+                self.prior_groupvec_scale*torch.ones_like(self.groupvec.weight)
+                ).to_event(2))
+
         self.groupscale = PyroModule[nn.Embedding](
             num_embeddings=self.num_group, embedding_dim=self.item_dim)
+
         self.groupscale.weight = PyroSample(
-            dist.Normal(0.0 * torch.ones_like(self.groupscale.weight), 0.2 *
-                        torch.ones_like(self.groupscale.weight)).to_event(2))
+            dist.Normal(
+                0.0 * torch.ones_like(self.groupscale.weight), 
+                self.prior_groupscale_scale *torch.ones_like(self.groupscale.weight)
+                ).to_event(2))
 
         # Item vec based on group vec hier prior:
         self.itemvec = PyroModule[nn.Embedding](num_embeddings=num_items,
@@ -235,7 +239,7 @@ class MeanFieldGuide:
         self.item_dim = item_dim
         self.num_users = num_users
         self.hidden_dim = hidden_dim
-        self.maxscale = 0.1
+        self.maxscale = kwargs.get("guide_maxscale", 0.1)
 
         self.model_trace = poutine.trace(model).get_trace(batch)
     def __call__(self, batch=None, temp = 1.0):
@@ -243,9 +247,9 @@ class MeanFieldGuide:
         for node, obj in self.model_trace.iter_stochastic_nodes():
             par = obj['value']    
             if node == 'h0-batch':
-                mean = pyro.param(f"{node}-mean",
+                mean = pyro.param(f"h0-mean",
                                     init_tensor = 0.01*torch.zeros((self.num_users, self.hidden_dim)))
-                scale = pyro.param(f"{node}-scale",
+                scale = pyro.param(f"h0-scale",
                                     init_tensor=0.001 +
                                     0.05 * 0.01*torch.ones((self.num_users, self.hidden_dim)),
                                     constraint=constraints.interval(0,self.maxscale))
@@ -254,7 +258,7 @@ class MeanFieldGuide:
                     posterior[node] = pyro.sample(
                         node,
                         dist.Normal(mean[batch['userId']], temp*scale[batch['userId']]).to_event(1))
-            elif node == "gamma":
+            elif node == "NOT_GAMMA":
                 mean = pyro.param(f"{node}-mean",
                                     init_tensor= 0.01*par.detach().clone(),
                                     constraint=constraints.interval(0,0.98))
