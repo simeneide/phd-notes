@@ -21,7 +21,7 @@ def collect_simulated_data(sim, policy_epsilon=0.5, **kwargs):
 
     def policy_epsilon_greedy(policy_epsilon=policy_epsilon, *args, **kwargs):
         if random.random() < policy_epsilon:
-            return sim.env.recommend(*args, **kwargs)
+            return sim.env.recommend(par="real",*args, **kwargs)
         else:
             return randomagent.recommend(*args, **kwargs)
 
@@ -92,8 +92,8 @@ class Simulator(Dataset):
     def build_dataloaders(self, batch_size=512, num_testusers =100, t_testsplit=10, **kwargs):
         torch.manual_seed(0)
         perm_user = torch.randperm(self.num_users)
-        valid_user_idx = perm_user[:num_testusers]
-        train_user_idx = perm_user[num_testusers:]
+        valid_user_idx = torch.arange(num_testusers)
+        train_user_idx = torch.arange(num_testusers, self.num_users)
         self.data['mask_train'] = torch.ones_like(self.data['click'])
         self.data['mask_train'][valid_user_idx, t_testsplit:] = 0
 
@@ -147,7 +147,7 @@ class Simulator(Dataset):
             'action'][self.batch_user, self.t].gather(
                 -1, self.data['click_idx'][self.batch_user, self.t].unsqueeze(
                     -1)).squeeze()
-        reward = (self.data['click'][self.batch_user, self.t] >= 2).float().mean()
+        reward = (self.data['click'][self.batch_user, self.t] >= 2).float()
 
         self.t += 1
 
@@ -156,21 +156,21 @@ class Simulator(Dataset):
 
         return self.return_data(), reward, done
 
-    def play_game(self, agent_function, userIds = None, t_end = None):
+    def play_game(self, agent_function, userIds = None, t_end = None, **kwargs):
         """ Play a full game with a given environment function and a given agent function"""
         if t_end is None:
             t_end = self.maxlen_time
         # Sample U_b users with no interactions:
         batch = self.reset(userIds=userIds)
 
-        reward = torch.zeros((t_end, ))
+        reward = torch.zeros((len(self.batch_user), t_end ))
         for t in range(t_end):
             # Let agent recommend:
             action = agent_function(batch=batch, max_rec=self.maxlen_slate -
-                                    1).to(self.device)
+                                    1, **kwargs).to(self.device)
             #print(action)
             # Let environment generate a click and return an updated user history
-            batch, reward[t], done = self.step(action)
+            batch, reward[:,t], done = self.step(action)
             if done is True:
                 return reward
         return reward  # return avg cum reward
