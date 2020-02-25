@@ -10,19 +10,97 @@ from pyro.infer.autoguide import AutoDiagonalNormal, init_to_sample, AutoDelta
 from pyro import poutine
 import torch.distributions.constraints as constraints
 import logging
+from torch.utils.data import DataLoader
+from torch.utils.data import Dataset
 logging.basicConfig(format='%(asctime)s %(message)s', level='INFO')
 import warnings
 #import simulator
-import agents
-def set_noninform_prior(mod, scale=1.0):
-    for key, par in list(mod.named_parameters()):
-        setattr(
-            mod, key,
-            PyroSample(
-                dist.Normal(torch.zeros_like(par),
-                            scale * torch.ones_like(par)).independent()))
+import seaborn as sns
 
-class Model(agents.PyroRecommender):
+
+### WRAPPER FOR MODELS:
+def chunker(seq, size):
+    return (seq[pos:pos + size] for pos in range(0, len(seq), size))
+
+class PyroRecommender(PyroModule):
+    """ A Pyro Recommender Module. Have some common functionalities that are shared among all recommenders"""
+    def __init__(self, **kwargs):
+        super().__init__()
+        # Register all input vars in module:
+        for key, val in kwargs.items():
+            setattr(self,key,val)
+        self.init_set_of_real_parameters()
+        self.trainmode=True # defaults to training mode.
+
+    @pyro_method
+    def simulate(self, batch):
+        return pyro.condition(
+            lambda batch: self.forward(batch, mode="simulate"),
+            data=self.get_real_par(batch))(batch)
+
+    @pyro_method
+    def likelihood(self, batch, par = None): 
+        if par is None:
+            par = self.get_real_par(batch)
+
+        return pyro.condition(
+            lambda batch: self.forward(batch, mode="likelihood"),
+            data=par)(batch)
+
+    @pyro_method
+    def predict_cond(self, batch, par=None, **kwargs):
+        """
+                Par can either be the string "real" or a function that outputs the parameters when called with a batch of data.
+        """
+        if par is "real":
+            par = self.get_real_par(batch)
+        else:
+            par = par(batch)
+        return pyro.condition(
+            lambda batch: self.predict(batch, **kwargs),
+            data=par)(batch)
+    @pyro_method
+    def recommend(self, batch, max_rec=1, chunksize=3, t=-1, par=None, **kwargs):
+        """
+        Compute predict & rank on a batch in chunks (for memory)
+        Par can either be the string "real" or a function that outputs the parameters when called with a batch of data.
+
+        """
+
+        click_seq = batch['click']
+        topk = torch.zeros((len(click_seq), max_rec), device=self.device)
+
+        i = 0
+        for click_chunck, userId in zip(
+            chunker(click_seq, chunksize),
+            chunker(batch['userId'], chunksize)):
+            pred, ht = self.predict_cond(
+                batch={'click' :click_chunck, 'userId' : userId}, t=t, par=par)
+            topk_chunk = 3 + pred[:, 3:].argsort(dim=1,
+                                                 descending=True)[:, :max_rec]
+            topk[i:(i + len(pred))] = topk_chunk
+            i += len(pred)
+        return topk
+
+    def visualize_item_space(self):
+        if self.item_dim ==2:
+            V = self.par_real['item_model.itemvec.weight'].cpu()
+            sns.scatterplot(V[:, 0].cpu(),
+                            V[:, 1].cpu(),
+                            hue=self.item_group.cpu())
+            plt.xlim(-2, 2)
+            plt.ylim(-2, 2)
+            plt.show()
+        if self.item_dim == 3:
+            visualize_3d_scatter(self.par_real['item_model.itemvec.weight'])
+
+    def train(self):
+        self.trainmode=True
+
+    def eval(self):
+        self.trainmode=False
+
+class Model(PyroRecommender):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -70,8 +148,7 @@ class Model(agents.PyroRecommender):
 
 
         # Set user initial conditions to specific groups:
-        self.user_init = (torch.arange(self.num_users) //
-                        (self.num_users / self.num_groups)).long()
+        self.user_init = torch.randint(self.num_groups, (self.num_users,))
 
         par_real['h0'] = groupvec[self.user_init]
 
@@ -84,7 +161,7 @@ class Model(agents.PyroRecommender):
         out['h0-batch'] = self.par_real["h0"][batch['userId']]
         return out
 
-
+    @pyro_method
     def forward(self, batch, mode = "likelihood", t=None):
         click_seq = batch['click']
         userIds = batch['userId']
@@ -95,7 +172,7 @@ class Model(agents.PyroRecommender):
         click_vecs = itemvec[click_seq]
 
         # Sample user dynamic parameters:
-        gamma = self.gamma#.clamp(0,1)
+        gamma = self.gamma
         softmax_mult = self.softmax_mult
         bias_noclick = self.bias_noclick
 
@@ -228,6 +305,7 @@ class ItemHier(PyroModule):
             self.groupvec(self.item_group),
             self.groupscale(self.item_group).clamp(0.001, 0.99)).to_event(2))
 
+    @pyro_method
     def forward(self, idx=None):
         if idx is None:
             idx = torch.arange(self.num_items).to(self.device)
@@ -242,6 +320,7 @@ class MeanFieldGuide:
         self.maxscale = kwargs.get("guide_maxscale", 0.1)
 
         self.model_trace = poutine.trace(model).get_trace(batch)
+    
     def __call__(self, batch=None, temp = 1.0):
         posterior = {}
         for node, obj in self.model_trace.iter_stochastic_nodes():
@@ -258,17 +337,6 @@ class MeanFieldGuide:
                     posterior[node] = pyro.sample(
                         node,
                         dist.Normal(mean[batch['userId']], temp*scale[batch['userId']]).to_event(1))
-            elif node == "NOT_GAMMA":
-                mean = pyro.param(f"{node}-mean",
-                                    init_tensor= 0.01*par.detach().clone(),
-                                    constraint=constraints.interval(0,0.98))
-                scale = pyro.param(f"{node}-scale",
-                                    init_tensor=0.0001 +
-                                    0.0 * par.detach().clone().abs(),
-                                    constraint=constraints.interval(0,0.001))
-                posterior[node] = pyro.sample(
-                    node,
-                    dist.Normal(mean, temp*scale).independent())
 
             else:
                 mean = pyro.param(f"{node}-mean",
@@ -298,13 +366,8 @@ class MeanFieldGuide:
         for node, obj in self.model_trace.iter_stochastic_nodes():
             par = obj['value']
             varpar[node] = {}
-            varpar[node]['mean'] = pyro.param(f"{node}-mean",
-                                              init_tensor=0.1 *
-                                              torch.randn_like(par))
-            varpar[node]['scale'] = pyro.param(f"{node}-scale",
-                                               init_tensor=0.01 *
-                                               par.detach().clone().abs(),
-                                               constraint=constraints.positive)
+            varpar[node]['mean'] = pyro.param(f"{node}-mean")
+            varpar[node]['scale'] = pyro.param(f"{node}-scale")
         return varpar
 
 #%% MODEL GAMMA WITH POSITIVE POLAR COORD
@@ -324,3 +387,43 @@ def generate_random_points_on_d_surface(d, num_points, radius, max_angle=3.14, l
 
     X = cosvec * sincum*r
     return X
+
+
+def visualize_3d_scatter(dat):
+    import plotly
+    import plotly.graph_objs as go
+    plotly.offline.init_notebook_mode()
+
+    # Configure the trace.
+    trace = go.Scatter3d(
+        x=dat[:,0],  # <-- Put your data instead
+        y=dat[:,1],  # <-- Put your data instead
+        z=dat[:,2],  # <-- Put your data instead
+        mode='markers',
+        marker={
+            'size': 2,
+            'opacity': 0.8,
+        }
+    )
+
+    # Configure the layout.
+    layout = go.Layout(
+        margin={'l': 0, 'r': 0, 'b': 0, 't': 0}
+    )
+
+    data = [trace]
+
+    plot_figure = go.Figure(data=data, layout=layout)
+
+    # Render the plot.
+    plotly.offline.iplot(plot_figure)
+
+
+def set_noninform_prior(mod, scale=1.0):
+    for key, par in list(mod.named_parameters()):
+        setattr(
+            mod, key,
+            PyroSample(
+                dist.Normal(torch.zeros_like(par),
+                            scale * torch.ones_like(par)).independent()))
+
