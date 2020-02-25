@@ -15,9 +15,10 @@ from torch.utils.tensorboard import SummaryWriter
 logging.basicConfig(format='%(asctime)s %(message)s', level='INFO')
 from pyro import poutine
 class PyroTrainer:
-    def __init__(self, model, guide, learning_rate = 1e-2, max_epoch=100, param=None,report_param_histogram=False, **kwargs):
+    def __init__(self, model, guide, dataloaders, learning_rate = 1e-2, max_epoch=100, param=None,report_param_histogram=False, **kwargs):
         self.model = model
         self.guide = guide
+        self.dataloaders = dataloaders
         self.learning_rate = learning_rate
         self.max_epoch  = max_epoch
         self.param = param
@@ -101,7 +102,7 @@ class PyroTrainer:
                 logging.info('Early stopping criteria reached.')
                 return None
 
-    def fit(self, dataloaders):
+    def fit(self):
         """ 
         Dataloaders is a dict of dataloaders:
         {'train' : Dataloader, 'valid': Dataloader}
@@ -109,21 +110,20 @@ class PyroTrainer:
         # Initialize an epoch log
         self.epoch_log = list()
         
-        self.run_training_epochs(dataloaders)
+        self.run_training_epochs(self.dataloaders)
 
         self.end_of_training()
-
-
-
 
 class RecTrainer(PyroTrainer):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self.sim = kwargs.get("sim")
 
     def training_step(self, batch):
         self.model.train()
         loss = self.svi.step(batch)
         stats = self.calc_stats(batch)
+
         stats['loss'] = loss
         return stats
 
@@ -137,8 +137,8 @@ class RecTrainer(PyroTrainer):
 
     def calc_stats(self, batch):
         res_hat = pyro.condition(
-            lambda batch: self.model.forward(batch),
-            data = self.guide(batch))(batch)
+            lambda batch: self.model(batch),
+            data = self.guide(batch, temp=0.00))(batch)
 
         res = self.model.likelihood(batch)
 
@@ -149,6 +149,7 @@ class RecTrainer(PyroTrainer):
 
         # report stats on batch:
         stats = {f"{key}-L1" : val.abs().mean() for key,val in res_hat.items()}
+        stats['scoreTrue-L1'] = res['score'].abs().mean()
         stats['prob-mae'] = (res['prob']-res_hat['prob_hat']).abs().mean()
 
         ## LIKELIHOODS
@@ -156,30 +157,43 @@ class RecTrainer(PyroTrainer):
         with poutine.replay(trace=guide_tr), torch.no_grad():
             model_trace = poutine.trace(self.model).get_trace(batch)
             model_trace.compute_log_prob()
-            stats['neglog_lik'] = -model_trace.nodes['obs']['log_prob_sum']
-            stats['neglog_totprob'] = -model_trace.log_prob_sum().item()
-            stats[
-                'neglog_prior'] = stats['neglog_totprob'] - stats['neglog_lik']
-
+            stats['loglik'] = model_trace.nodes['obs']['log_prob_sum']
+            stats['totlogprob'] = model_trace.log_prob_sum().item()
+            stats['logprior'] = stats['totlogprob'] - stats['loglik']
         return stats
 
     def end_of_training(self):
         logging.info("Running end of training stats..")
+        # calculate rewards:
+        if self.sim:
+            self.dataloaders['train'].dataset.data['userId']
+
+
+            all_rewards = self.sim.play_game( 
+                self.model.recommend, 
+                par=self.guide, 
+                userIds=self.dataloaders['train'].dataset.data['userId'])
+
+            train_mask = self.dataloaders['train'].dataset.data['mask_train']
+            self.epoch_log[-1]['train/reward'] = (all_rewards*train_mask).sum() / train_mask.sum()
+            self.epoch_log[-1]['valid/reward'] = (all_rewards*(1-train_mask)).sum() / (1-train_mask).sum()
+
         # Add hyperparameters and final metrics to hparam:
         self.writer.add_hparams(hparam_dict=self.param, metric_dict=self.epoch_log[-1])
 
         # Visualize item vectors:
 
         # %% PLOT OF item vector parameters
-        V = self.guide.get_parameters()['item_model.itemvec.weight']['mean'].detach()
+        V = pyro.param('item_model.itemvec.weight-mean').detach()
         fig = plt.figure()
         plt.scatter(V[:,0], V[:,1], c = self.model.item_model.item_group)
         self.writer.add_figure('V', fig, 0)
 
         # %% PLOT OF H0 parameters of users
-        h0 = pyro.param("h0-mean").detach() #self.guide.get_parameters()['h0-batch']['mean'].detach()
+        num_plot_users = 1000
+        h0 = pyro.param("h0-mean").detach()[:num_plot_users] #self.guide.get_parameters()['h0-batch']['mean'].detach()
         fig = plt.figure()
-        plt.scatter(h0[:,0], h0[:,1], c=self.model.user_init, alpha = 0.1)
+        plt.scatter(h0[:,0], h0[:,1], c=self.model.user_init[:num_plot_users], alpha = 0.1)
         self.writer.add_figure('h0', fig, 0)
 
 
