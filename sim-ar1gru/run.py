@@ -13,7 +13,7 @@ import pyro
 import pyro.distributions as dist
 import models
 logging.basicConfig(format='%(asctime)s %(message)s', level='INFO')
-
+#%%
 def main(**kwargs):
     param = utils.load_param()
 
@@ -30,9 +30,10 @@ def main(**kwargs):
                 (param['num_items'] / (param['num_groups']-1))).long()
     item_group[:3] = 0 # first three items are special group
     itemattr = {'category': item_group.numpy()}
+
     # %% TRAIN: MODEL+CALLBACKS+TRAINER
     pyro.clear_param_store()
-    env = models.Model(**param, item_group=torch.tensor(itemattr['category']))
+    env = models.AR_Model(**param, item_group=torch.tensor(itemattr['category']))
     sim = simulator.Simulator(**param, env=env)
     ind2val, itemattr, dataloaders, sim = simulator.collect_simulated_data(
         sim, policy_epsilon=0.5, **param)
@@ -41,7 +42,8 @@ def main(**kwargs):
     pyro.clear_param_store()
     import pyrotrainer
     dummybatch = next(iter(dataloaders['train']))
-    model = models.Model(**param, item_group=torch.tensor(itemattr['category']))
+    dummybatch['phase_mask'] = dummybatch['mask_train']
+    model = models.AR_Model(**param, item_group=torch.tensor(itemattr['category']))
     guide = models.MeanFieldGuide(model=env, batch=dummybatch, **param)
     #%%
     from pyro import poutine

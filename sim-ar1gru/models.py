@@ -100,7 +100,7 @@ class PyroRecommender(PyroModule):
     def eval(self):
         self.trainmode=False
 
-class Model(PyroRecommender):
+class AR_Model(PyroRecommender):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -236,11 +236,14 @@ class Model(PyroRecommender):
             if mode == "likelihood":
                 # MASKING
                 time_mask = (batch['click'] != 0)*(batch['click'] != 2).float()
-                if self.trainmode:
-                    phase_mask = batch['mask_train']
-                else:
-                    phase_mask = 1-batch['mask_train']
-                mask = time_mask*phase_mask
+                mask = time_mask*batch['phase_mask']
+
+
+                obsdistr = dist.Categorical(logits=scores).mask(mask).to_event(1)
+                pyro.sample("obs", obsdistr, obs=target_idx)
+                
+            return {'score' : scores, 'zt' : Z, 'V' : itemvec}
+
 
 
                 obsdistr = dist.Categorical(logits=scores).mask(mask).to_event(1)
