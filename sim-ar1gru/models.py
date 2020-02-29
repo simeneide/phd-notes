@@ -262,6 +262,12 @@ class RNN_Model(PyroRecommender):
 
         # Set priors on parameters:
         self.item_model = ItemHier(**kwargs)
+        self.rnn = Gru(
+            input_size=self.item_dim,
+            hidden_size=self.hidden_dim,
+            bias=False)
+
+        set_noninform_prior(self.rnn)
         #self.gamma = PyroSample( dist.Normal(torch.tensor(0.5),torch.tensor(0.2)) )
         self.softmax_mult = self.softmax_mult # PyroSample( prior = dist.Normal(torch.tensor(1.0), torch.tensor(1.0)))
         self.bias_noclick = PyroSample(
@@ -328,77 +334,82 @@ class RNN_Model(PyroRecommender):
         click_vecs = itemvec[click_seq]
 
         # Sample user dynamic parameters:
-        gamma = self.gamma
         softmax_mult = self.softmax_mult
         bias_noclick = self.bias_noclick
 
-        with pyro.plate("data", size = self.num_users, subsample = userIds):
+        with pyro.plate("user-init-plate", size = self.num_users, subsample = userIds):
             ## USER PROFILE
             # container for all hidden states:
-            H = torch.zeros( (batch_size, t_maxclick+1, self.hidden_dim))
 
             # Sample initial hidden state of users:
-            h0 = pyro.sample("h0-batch", dist.Normal(
-                torch.zeros((batch_size, self.hidden_dim)), self.prior_userinit_scale*torch.ones((batch_size, self.hidden_dim))
+            h0 = pyro.sample("h0-batch", 
+            dist.Normal(
+                torch.zeros((batch_size, self.hidden_dim)), 
+                self.prior_userinit_scale*torch.ones((batch_size, self.hidden_dim))
                 ).to_event(1)
                 )
 
-            H_list = [h0]
-            for t in range(t_maxclick):
-                h_new = gamma * H_list[-1] + (1-gamma)*click_vecs[:,t]
-                H_list.append(h_new)
+        H = torch.zeros( (batch_size, t_maxclick+1, self.hidden_dim))
 
-            H = torch.cat( [h.unsqueeze(1) for h in H_list], dim =1)
-            Z = H # linear from hidden to Z_t
+        H_list = [h0]
+        for t in range(t_maxclick):
+            output, h_new = self.rnn(
+                click_vecs[:,t], 
+                H_list[-1]
+                )
+            H_list.append(h_new)
 
-
-            # NB: DOES NOT WORK FOR LARGE BATCHES:
-            if mode =="predict":
-                
-                zt_last = Z[:, t, ]
-                score = (zt_last.unsqueeze(1) * itemvec.unsqueeze(0)).sum(-1)
-                return score, H
-
-            target_idx = batch['click_idx']
+        H = torch.cat( [h.unsqueeze(1) for h in H_list], dim =1)
+        Z = H # linear from hidden to Z_t
 
 
-
-            lengths = (batch['action'] != 0).long().sum(-1)
-            action_vecs = itemvec[batch['action']]
-
-            # Compute scores for all actions by recommender
-            scores = (Z[:,:t_maxclick].unsqueeze(2) * action_vecs).sum(-1)
-
-            scores = scores*softmax_mult
-
-            # Add a constant based on inscreen length to the no click option:
-            batch_bias = bias_noclick[lengths]
-            batch_bias = (batch['action'][:, :, 0] == 1).float() * batch_bias
-            scores[:,:,0] += batch_bias
-            # PAD MASK: mask scores through neg values for padded candidates:
-            scores[batch['action'] == 0] = -100
-            scores = scores.clamp(-100,20)
-
-            # SIMULATE
-            # If we want to simulate, then t_maxclick = t_maxclick+1
-            if mode == "simulate":
-                # Check that there are not click in last time step:
-                if bool((batch['click'][:,-1] != 0 ).any() ):
-                    warnings.warn("Trying to sample from model, but there are observed clicks in last timestep.")
-                
-                gen_click_idx = dist.Categorical(logits=scores[:, -1, :]).sample()
-                return gen_click_idx
+        # NB: DOES NOT WORK FOR LARGE BATCHES:
+        if mode =="predict":
             
-            if mode == "likelihood":
-                # MASKING
-                time_mask = (batch['click'] != 0)*(batch['click'] != 2).float()
-                mask = time_mask*batch['phase_mask']
+            zt_last = Z[:, t, ]
+            score = (zt_last.unsqueeze(1) * itemvec.unsqueeze(0)).sum(-1)
+            return score, H
+
+        target_idx = batch['click_idx']
 
 
+
+        lengths = (batch['action'] != 0).long().sum(-1)
+        action_vecs = itemvec[batch['action']]
+
+        # Compute scores for all actions by recommender
+        scores = (Z[:,:t_maxclick].unsqueeze(2) * action_vecs).sum(-1)
+
+        scores = scores*softmax_mult
+
+        # Add a constant based on inscreen length to the no click option:
+        batch_bias = bias_noclick[lengths]
+        batch_bias = (batch['action'][:, :, 0] == 1).float() * batch_bias
+        scores[:,:,0] += batch_bias
+        # PAD MASK: mask scores through neg values for padded candidates:
+        scores[batch['action'] == 0] = -100
+        scores = scores.clamp(-100,20)
+
+        # SIMULATE
+        # If we want to simulate, then t_maxclick = t_maxclick+1
+        if mode == "simulate":
+            # Check that there are not click in last time step:
+            if bool((batch['click'][:,-1] != 0 ).any() ):
+                warnings.warn("Trying to sample from model, but there are observed clicks in last timestep.")
+            
+            gen_click_idx = dist.Categorical(logits=scores[:, -1, :]).sample()
+            return gen_click_idx
+        
+        if mode == "likelihood":
+            # MASKING
+            time_mask = (batch['click'] != 0)*(batch['click'] != 2).float()
+            mask = time_mask*batch['phase_mask']
+
+            with pyro.plate("data", size = self.num_users, subsample = userIds):
                 obsdistr = dist.Categorical(logits=scores).mask(mask).to_event(1)
                 pyro.sample("obs", obsdistr, obs=target_idx)
-                
-            return {'score' : scores, 'zt' : Z, 'V' : itemvec}
+            
+        return {'score' : scores, 'zt' : Z, 'V' : itemvec}
 
     #@torch.no_grad()
     @pyro_method
@@ -411,6 +422,37 @@ class RNN_Model(PyroRecommender):
         """
         return self.forward(batch, t=t, mode = "predict")
 
+def build_linear_pyromodule(nn_mod = nn.Linear, scale = 1.0, **kwargs):
+    layer = PyroModule[nn_mod](**kwargs)
+    set_noninform_prior(layer, scale =scale)
+    return layer
+
+class Gru(PyroModule):
+    def __init__(self, input_size, hidden_size, bias):
+        super().__init__()
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.bias = bias
+        self.scale = 1.0
+        self.W_z = build_linear_pyromodule(in_features=hidden_size, out_features= input_size, bias=False)
+
+        self.W_ir = build_linear_pyromodule(in_features = input_size, out_features = hidden_size, bias=False)
+        self.W_id = build_linear_pyromodule(in_features = input_size, out_features = hidden_size, bias=False)
+        self.W_in = build_linear_pyromodule(in_features = input_size, out_features = hidden_size, bias=False)
+
+        self.W_hr = build_linear_pyromodule(in_features = hidden_size, out_features = hidden_size, bias=False)
+        self.W_hd = build_linear_pyromodule(in_features = hidden_size, out_features = hidden_size, bias=False)
+        self.W_hn = build_linear_pyromodule(in_features = hidden_size, out_features = hidden_size, bias=False)
+
+        self.act = nn.Sigmoid()
+
+    def forward(self, input, h_prev):
+        reset_gate = self.act(self.W_ir(input) + self.W_hr(h_prev))
+        update_gate = self.act(self.W_id(input) + self.W_hd(h_prev))
+        new_gate = nn.Tanh()( self.W_in(input) + reset_gate * ( self.W_hn(h_prev)) )
+        hidden_new = (1-update_gate) * new_gate + update_gate * h_prev
+        output = self.W_z(hidden_new)
+        return output, hidden_new
 
 
 class ItemHier(PyroModule):
@@ -472,7 +514,7 @@ class MeanFieldGuide:
         self.num_users = num_users
         self.hidden_dim = hidden_dim
         self.maxscale = kwargs.get("guide_maxscale", 0.1)
-
+        self.guide_userinit = kwargs.get("guide_userinit", False)
         self.model_trace = poutine.trace(model).get_trace(batch)
     
     def __call__(self, batch=None, temp = 1.0):
@@ -480,12 +522,16 @@ class MeanFieldGuide:
         for node, obj in self.model_trace.iter_stochastic_nodes():
             par = obj['value']    
             if node == 'h0-batch':
+                
                 mean = pyro.param(f"h0-mean",
                                     init_tensor = 0.01*torch.zeros((self.num_users, self.hidden_dim)))
                 scale = pyro.param(f"h0-scale",
                                     init_tensor=0.001 +
                                     0.05 * 0.01*torch.ones((self.num_users, self.hidden_dim)),
                                     constraint=constraints.interval(0,self.maxscale))
+                if self.guide_userinit is False:
+                    mean = torch.zeros_like(mean)
+                    scale = 0.01*torch.ones_like(scale)
 
                 with pyro.plate("data", size = self.num_users, subsample = batch['userId']):
                     posterior[node] = pyro.sample(
