@@ -43,8 +43,13 @@ def main(**kwargs):
     import pyrotrainer
     dummybatch = next(iter(dataloaders['train']))
     dummybatch['phase_mask'] = dummybatch['mask_train']
-    model = models.AR_Model(**param, item_group=torch.tensor(itemattr['category']))
-    guide = models.MeanFieldGuide(model=env, batch=dummybatch, **param)
+
+    if param['model_type'] == "rnn":
+        model = models.RNN_Model(**param, item_group=torch.tensor(itemattr['category']))
+    elif param['model_type'] == "ar1":
+        model = models.AR_Model(**param, item_group=torch.tensor(itemattr['category']))
+        
+    guide = models.MeanFieldGuide(model=model, batch=dummybatch, **param)
     #%%
     from pyro import poutine
     tr = poutine.trace(
