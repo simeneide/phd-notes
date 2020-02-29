@@ -163,7 +163,7 @@ class RecTrainer(PyroTrainer):
         res_hat = pyro.condition(lambda batch: self.model(batch),
                                  data=self.guide(batch, temp=0.00))(batch)
 
-        res = self.model.likelihood(batch)
+        res = self.sim.env.likelihood(batch)
 
         # Compute probabilities
         score2prob = lambda s: s.exp() / (s.exp().sum(2, keepdims=True))
