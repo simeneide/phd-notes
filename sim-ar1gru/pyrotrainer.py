@@ -117,7 +117,7 @@ class PyroTrainer:
 
             # EARLY STOPPING CHECK
             stop = self.earlystop(epoch=ep,
-                                  loss=-self.epoch_log[-1]['valid/loglik'])
+                                  loss=-self.epoch_log[-1]['train/loss'])
             if stop:
                 logging.info('Early stopping criteria reached.')
                 return None
@@ -179,13 +179,19 @@ class RecTrainer(PyroTrainer):
         stats['prob-mae'] = masked_prob.abs().sum()
 
         ## LIKELIHOODS
-        guide_tr = poutine.trace(self.guide).get_trace(batch)
-        with poutine.replay(trace=guide_tr), torch.no_grad():
-            model_trace = poutine.trace(self.model).get_trace(batch)
-            model_trace.compute_log_prob()
-            stats['loglik'] = model_trace.nodes['obs']['unscaled_log_prob'].sum()
-            stats['totlogprob'] = model_trace.log_prob_sum().item()
-            stats['logprior'] = stats['totlogprob'] - stats['loglik']
+        
+    
+        guide_trace = poutine.trace(self.guide).get_trace(batch)
+        replay = poutine.replay(trace=guide_trace)
+        model_trace = poutine.trace(self.model).get_trace(batch)
+        model_trace.compute_log_prob()
+        guide_trace.compute_log_prob()
+        stats['logguide'] = guide_trace.log_prob_sum().item()
+        stats['loglik'] = model_trace.nodes['obs']['unscaled_log_prob'].sum()
+        stats['totlogprob'] = model_trace.log_prob_sum().item()
+        stats['logprior'] = stats['totlogprob'] - stats['loglik']
+        stats['KL_pq'] = stats['loglik'] - stats['logguide']
+        stats['elbo'] = stats['logprior'] + stats['KL_pq']
         return stats
 
     def end_of_training(self):
@@ -231,7 +237,7 @@ class RecTrainer(PyroTrainer):
 
 
 class EarlyStoppingAndCheckpoint:
-    def __init__(self, patience=1, save_dir="checkpoints", **kwargs):
+    def __init__(self, patience=1, save_dir="checkpoints", name = "parameters", **kwargs):
         self.save_dir = save_dir
         if not os.path.exists(self.save_dir):
             os.makedirs(self.save_dir)
@@ -239,6 +245,7 @@ class EarlyStoppingAndCheckpoint:
         self.best_loss = None
         self.patience = patience
         self.counter = 0
+        self.path = f"{self.save_dir}/{name}.pyro"
 
     def __call__(self, epoch, loss):
         if self.best_loss is None:
@@ -249,6 +256,7 @@ class EarlyStoppingAndCheckpoint:
             self.counter += 1
             if self.counter > self.patience:
                 logging.info(f"REACHED EARLY STOPPING ON EPOCH {epoch}")
+                self.load_checkpoint()
                 return True
         elif loss < self.best_loss:
             self.best_loss = loss
@@ -257,6 +265,10 @@ class EarlyStoppingAndCheckpoint:
             return False
 
     def save_checkpoint(self):
-        path = f"{self.save_dir}/parameters.pyro"
-        logging.info(f"Saving model to {path}..")
-        pyro.get_param_store().save(path)
+        logging.info(f"Saving model to {self.path}..")
+        pyro.get_param_store().save(self.path)
+
+    def load_checkpoint(self):
+        logging.info(f"Loading latest checkpoint from {self.path}.. (+ clear param store first)")
+        pyro.clear_param_store()
+        pyro.get_param_store().load(self.path)
