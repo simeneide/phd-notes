@@ -64,7 +64,6 @@ class PyroRecommender(PyroModule):
         """
         Compute predict & rank on a batch in chunks (for memory)
         Par can either be the string "real" or a function that outputs the parameters when called with a batch of data.
-
         """
 
         click_seq = batch['click']

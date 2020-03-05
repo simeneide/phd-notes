@@ -35,7 +35,6 @@ class PyroTrainer:
         self.report_param_histogram = report_param_histogram
         self.init_opt(lr=self.learning_rate)
         self.step = 0  # global step counter (counts datapoints)
-
         self.earlystop = EarlyStoppingAndCheckpoint(**kwargs)
         self.writer = SummaryWriter(
             f'tensorboard/{kwargs.get("name", f"lr-{self.learning_rate}/")}')
@@ -117,7 +116,7 @@ class PyroTrainer:
 
             # EARLY STOPPING CHECK
             stop = self.earlystop(epoch=ep,
-                                  loss=-self.epoch_log[-1]['train/loss'])
+                                  loss=self.epoch_log[-1]['train/loss'])
             if stop:
                 logging.info('Early stopping criteria reached.')
                 return None
@@ -139,8 +138,11 @@ class RecTrainer(PyroTrainer):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.sim = kwargs.get("sim")
+        self.device = kwargs.get("device", "cpu")
+
 
     def training_step(self, batch):
+        batch = {key: val.long().to(self.device) for key, val in batch.items()}
         batch['phase_mask'] = batch['mask_train']
         loss = self.svi.step(batch)
         stats = self.calc_stats(batch)
@@ -151,6 +153,7 @@ class RecTrainer(PyroTrainer):
 
     @torch.no_grad()
     def validation_step(self, batch):
+        batch = {key: val.long().to(self.device) for key, val in batch.items()}
         batch['phase_mask'] = 1-batch['mask_train']
         loss = self.svi.evaluate_loss(batch)
         stats = self.calc_stats(batch)
@@ -160,23 +163,28 @@ class RecTrainer(PyroTrainer):
 
     @torch.no_grad()
     def calc_stats(self, batch):
-        res_hat = pyro.condition(lambda batch: self.model(batch),
-                                 data=self.guide(batch, temp=0.00))(batch)
+        stats = {}
 
-        res = self.sim.env.likelihood(batch)
+        if self.sim: # only compute if simulator exist
+            
+            res_hat = pyro.condition(lambda batch: self.model(batch),
+                                    data=self.guide(batch, temp=0.00))(batch)
 
-        # Compute probabilities
-        score2prob = lambda s: s.exp() / (s.exp().sum(2, keepdims=True))
-        res['prob'] = score2prob(res['score'])
-        res_hat['prob_hat'] = score2prob(res_hat['score'])
 
-        # report stats on batch:
-        stats = {}#{f"{key}-L1": val.abs().mean() for key, val in res_hat.items()}
-        
-        
-        prob_mae_unmasked = (res['prob'] - res_hat['prob_hat'])
-        masked_prob = (batch['phase_mask']).unsqueeze(2)*prob_mae_unmasked
-        stats['prob-mae'] = masked_prob.abs().sum()
+            res = self.sim.env.likelihood(batch)
+
+            # Compute probabilities
+            score2prob = lambda s: s.exp() / (s.exp().sum(2, keepdims=True))
+            res['prob'] = score2prob(res['score'])
+            res_hat['prob_hat'] = score2prob(res_hat['score'])
+
+            # report stats on batch:
+            #{f"{key}-L1": val.abs().mean() for key, val in res_hat.items()}
+            
+            
+            prob_mae_unmasked = (res['prob'] - res_hat['prob_hat'])
+            masked_prob = (batch['phase_mask']).unsqueeze(2)*prob_mae_unmasked
+            stats['prob-mae'] = masked_prob.abs().sum()
 
         ## LIKELIHOODS
         
@@ -187,11 +195,11 @@ class RecTrainer(PyroTrainer):
         model_trace.compute_log_prob()
         guide_trace.compute_log_prob()
         stats['logguide'] = guide_trace.log_prob_sum().item()
-        stats['loglik'] = model_trace.nodes['obs']['unscaled_log_prob'].sum()
+        stats['loglik'] = model_trace.nodes['obs']['log_prob'].sum()
         stats['totlogprob'] = model_trace.log_prob_sum().item()
         stats['logprior'] = stats['totlogprob'] - stats['loglik']
-        stats['KL_pq'] = stats['loglik'] - stats['logguide']
-        stats['elbo'] = stats['logprior'] + stats['KL_pq']
+        stats['KL_pq'] = stats['logprior'] - stats['logguide']
+        stats['elbo'] = stats['loglik'] + stats['KL_pq']
         return stats
 
     def end_of_training(self):
@@ -225,9 +233,8 @@ class RecTrainer(PyroTrainer):
 
         # %% PLOT OF H0 parameters of users
         num_plot_users = 1000
-        h0 = pyro.param("h0-mean").detach(
-        )[:
-          num_plot_users]  #self.guide.get_parameters()['h0-batch']['mean'].detach()
+        h0 = pyro.param("h0-mean").detach()[:num_plot_users]  
+        
         fig = plt.figure()
         plt.scatter(h0[:, 0],
                     h0[:, 1],

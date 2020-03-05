@@ -31,7 +31,7 @@ def collect_simulated_data(sim, policy_epsilon=0.5, **kwargs):
     )
     sim.generate_dataset(policy_epsilon_greedy)
 
-    itemattr = {'category': sim.env.item_group.numpy()}
+    itemattr = {'category': sim.env.item_group.cpu().numpy()}
     dataloaders = sim.build_dataloaders(**kwargs)
 
     ind2val = {
@@ -39,7 +39,7 @@ def collect_simulated_data(sim, policy_epsilon=0.5, **kwargs):
                    for key in range(kwargs['num_items'])},
         'userId':
         {key: str(key)
-         for key in sim.data['userId'].numpy()}
+         for key in sim.data['userId'].cpu().numpy()}
     }
 
     return ind2val, itemattr, dataloaders, sim
