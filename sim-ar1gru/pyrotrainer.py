@@ -226,19 +226,19 @@ class RecTrainer(PyroTrainer):
         # Visualize item vectors:
 
         # %% PLOT OF item vector parameters
-        V = pyro.param('item_model.itemvec.weight-mean').detach()
+        V = pyro.param('item_model.itemvec.weight-mean').detach().cpu()
         fig = plt.figure()
-        plt.scatter(V[:, 0], V[:, 1], c=self.model.item_model.item_group)
+        plt.scatter(V[:, 0], V[:, 1], c=self.model.item_model.item_group.cpu())
         self.writer.add_figure('V', fig, 0)
 
         # %% PLOT OF H0 parameters of users
         num_plot_users = 1000
-        h0 = pyro.param("h0-mean").detach()[:num_plot_users]  
+        h0 = pyro.param("h0-mean").detach().cpu()[:num_plot_users]  
         
         fig = plt.figure()
         plt.scatter(h0[:, 0],
                     h0[:, 1],
-                    c=self.model.user_init[:num_plot_users],
+                    c=self.model.user_init[:num_plot_users].cpu(),
                     alpha=0.1)
         self.writer.add_figure('h0', fig, 0)
 
