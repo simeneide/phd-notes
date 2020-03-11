@@ -24,14 +24,16 @@ random_par = {
 jobs.append(delayed(run.main)(**random_par))
 
 # %% 
-for model_type in ['ar1','rnn']:
-    for guide_userinit in [True, False]:
-        update_pars = {
-            'model_type' : model_type,
-            'guide_userinit' : guide_userinit
-            }
-        update_pars['name'] = f"{names.get_full_name().replace(' ','-')}_" + ", ".join([f"{key}:{val}" for key, val in update_pars.items()])
-        jobs.append(delayed(run.main)(**update_pars))
+for model_type in ['ar1']: # ,'rnn'
+    for guide_userinit in [True]: # , False
+        for maxlen_time in [20,50,100,200]:
+            update_pars = {
+                'model_type' : model_type,
+                'guide_userinit' : guide_userinit,
+                'maxlen_time' : maxlen_time
+                }
+            update_pars['name'] = f"{names.get_full_name().replace(' ','-')}_" + ", ".join([f"{key}:{val}" for key, val in update_pars.items()])
+            jobs.append(delayed(run.main)(**update_pars))
 
 # %%
 Parallel(n_jobs=9)(jobs)

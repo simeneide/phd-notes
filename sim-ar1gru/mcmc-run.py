@@ -82,18 +82,20 @@ mcmc = MCMC(hmc_kernel, num_samples=10000, warmup_steps=100, initial_params=init
 #%%
 all_data = dataloaders['train'].dataset.data
 all_data['phase_mask'] = all_data['mask_train']
-#%% TRAIN
-mcmc.run(all_data)
-# %% SAVE TO FILE
+#%% TRAIN and save
+TRAIN = False
+if TRAIN:
+    mcmc.run(all_data)
+    par = mcmc.get_samples()
+    par = {key : val.detach().cpu() for key, val in par.items()}
 
-par = mcmc.get_samples()
-par = {key : val.detach().cpu() for key, val in par.items()}
-
-with open("mcmc-cuda2.parameter", "wb") as file:
-    pickle.dump(par, file=file)
+    with open("mcmc-cuda2.parameter", "wb") as file:
+        pickle.dump(par, file=file)
+else:
+    with open("mcmc.parameter", "rb") as file:
+        par = pickle.load(file=file)
 #%% ANALYSIS
-with open("mcmc.parameter", "rb") as file:
-    par = pickle.load(file=file)
+
 # %%
 list(par.keys())
 
@@ -116,9 +118,14 @@ t0 = 9000
 Vg = par['item_model.groupvec.weight']
 
 Vg.size()
-
-for i in range(param['num_groups']):
-    plt.scatter(Vg[t0:,i,0], Vg[t0:,i,1])
+steps = 5
+breaks = np.linspace(0,10000, steps).round().astype("int")
+for t in range(len(breaks)-1):
+    t0 = breaks[t]
+    t_end = breaks[t+1]
+    for i in range(param['num_groups']):
+        plt.scatter(Vg[t0:t_end,i,0], Vg[t0:t_end,i,1], alpha=0.1)
+    plt.show()
 #%%
 d_i = 0
 d_j = 0
