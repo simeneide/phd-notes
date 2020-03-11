@@ -6,5 +6,8 @@ core*
 *.dat
 *.csv
 *.ckpt
+*.pyro
+*.pickle
+*.log
 events.out.tfevents*
 ludewig/
