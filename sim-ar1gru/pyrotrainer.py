@@ -190,8 +190,8 @@ class RecTrainer(PyroTrainer):
         
     
         guide_trace = poutine.trace(self.guide).get_trace(batch)
-        replay = poutine.replay(trace=guide_trace)
-        model_trace = poutine.trace(self.model).get_trace(batch)
+        model_with_guidepar = poutine.replay(self.model, trace=guide_trace)
+        model_trace = poutine.trace(model_with_guidepar).get_trace(batch)
         model_trace.compute_log_prob()
         guide_trace.compute_log_prob()
         stats['logguide'] = guide_trace.log_prob_sum().item()
