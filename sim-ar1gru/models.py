@@ -60,14 +60,14 @@ class PyroRecommender(PyroModule):
             lambda batch: self.predict(batch, **kwargs),
             data=par)(batch)
     @pyro_method
-    def recommend(self, batch, max_rec=1, chunksize=3, t=-1, par=None, **kwargs):
+    def recommend(self, batch, num_rec=1, chunksize=3, t=-1, par=None, **kwargs):
         """
         Compute predict & rank on a batch in chunks (for memory)
         Par can either be the string "real" or a function that outputs the parameters when called with a batch of data.
         """
 
         click_seq = batch['click']
-        topk = torch.zeros((len(click_seq), max_rec), device=self.device)
+        topk = torch.zeros((len(click_seq), num_rec), device=self.device)
 
         i = 0
         for click_chunck, userId in zip(
@@ -76,7 +76,7 @@ class PyroRecommender(PyroModule):
             pred, ht = self.predict_cond(
                 batch={'click' :click_chunck, 'userId' : userId}, t=t, par=par)
             topk_chunk = 3 + pred[:, 3:].argsort(dim=1,
-                                                 descending=True)[:, :max_rec]
+                                                 descending=True)[:, :num_rec]
             topk[i:(i + len(pred))] = topk_chunk
             i += len(pred)
         return topk

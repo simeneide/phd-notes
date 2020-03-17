@@ -166,7 +166,7 @@ class Simulator(Dataset):
         reward = torch.zeros((len(self.batch_user), t_end ))
         for t in range(t_end):
             # Let agent recommend:
-            action = agent_function(batch=batch, max_rec=self.maxlen_slate -
+            action = agent_function(batch=batch, num_rec=self.maxlen_slate -
                                     1, **kwargs).to(self.device)
             #print(action)
             # Let environment generate a click and return an updated user history
