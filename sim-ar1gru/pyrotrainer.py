@@ -206,8 +206,11 @@ class RecTrainer(PyroTrainer):
         logging.info("Running end of training stats..")
         # calculate rewards:
         if self.sim:
+            ### SIMULATE REWARDS..:
             self.dataloaders['train'].dataset.data['userId']
-
+            # Thompson recommendation:
+            logging.info("compute NORMAL reward..")
+            self.sim.reset_data()
             all_rewards = self.sim.play_game(
                 self.model.recommend,
                 par=self.guide,
@@ -219,7 +222,34 @@ class RecTrainer(PyroTrainer):
             self.epoch_log[-1]['valid/reward'] = (
                 all_rewards * (1 - train_mask)).sum() / (1 - train_mask).sum()
 
-        # Add hyperparameters and final metrics to hparam:
+            # Inslate recommendations:
+            logging.info("compute inslate reward..")
+            self.sim.reset_data()
+            all_rewards = self.sim.play_game(
+                self.model.recommend_inslate,
+                par=self.guide,
+                userIds=self.dataloaders['train'].dataset.data['userId'])
+
+            train_mask = self.dataloaders['train'].dataset.data['mask_train']
+            self.epoch_log[-1]['train/reward-inslate'] = (
+                all_rewards * train_mask).sum() / train_mask.sum()
+            self.epoch_log[-1]['valid/reward-inslate'] = (
+                all_rewards * (1 - train_mask)).sum() / (1 - train_mask).sum()
+
+            ### CALC FOOTRULE DISTANCE BETWEEN REAL AND ESTIMATED RECS:
+            # calc for all data at last timestep:
+            num_items = self.param['num_items']-3
+            argsort_real = self.model.recommend(self.dataloaders['train'].dataset.data, par="real", num_rec = num_items)
+            argsort_estimated = self.model.recommend(self.dataloaders['train'].dataset.data, par=self.guide, num_rec = num_items)
+            rank_real = argsort2rank_matrix(argsort_real.long(), num_items = num_items+3)
+            rank_estimated = argsort2rank_matrix(argsort_estimated.long(), num_items = num_items+3)
+            
+            train_idx = train_mask[:,-1]
+            self.epoch_log[-1][f'train/footrule'] = dist_footrule(rank_real[train_idx.bool()], rank_estimated[train_idx.bool()])
+            self.epoch_log[-1][f'valid/footrule'] = dist_footrule(rank_real[(1-train_idx).bool()], rank_estimated[(1-train_idx).bool()])
+
+
+        ### Add hyperparameters and final metrics to hparam:
         self.writer.add_hparams(hparam_dict=self.param,
                                 metric_dict=self.epoch_log[-1])
 
@@ -279,3 +309,28 @@ class EarlyStoppingAndCheckpoint:
         logging.info(f"Loading latest checkpoint from {self.path}.. (+ clear param store first)")
         pyro.clear_param_store()
         pyro.get_param_store().load(self.path)
+
+
+
+### FOOTRULE FUNCTIONS
+def argsort2rank(idx, num_items=None):
+    # create rank vector from the indicies that returns from torch.argsort()
+    if num_items is None:
+        num_items = len(idx)
+    rank = torch.zeros((num_items,)).long()
+    rank[idx] = torch.arange(0,len(idx))
+    return rank
+
+def argsort2rank_matrix(idx_matrix, num_items=None):
+    batch_size, nc = idx_matrix.size()
+    if num_items is None:
+        num_items = nc
+
+    rank = torch.zeros((batch_size, num_items)).long()
+
+    for i in range(batch_size):
+        rank[i,:] = argsort2rank(idx_matrix[i,:], num_items=num_items)
+    return rank
+
+def dist_footrule(r1, r2):
+    return (r1-r2).abs().float().mean()

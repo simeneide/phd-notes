@@ -64,7 +64,10 @@ class Simulator(Dataset):
         # Register all input vars in module:
         for key, val in defaults.items():
             setattr(self,key, kwargs.get(key, val))
+        
+        self.reset_data()
 
+    def reset_data(self):
         with torch.no_grad():
             self.pos = 0  # counter when adding
 

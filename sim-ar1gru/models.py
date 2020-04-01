@@ -59,6 +59,7 @@ class PyroRecommender(PyroModule):
         return pyro.condition(
             lambda batch: self.predict(batch, **kwargs),
             data=par)(batch)
+
     @pyro_method
     def recommend(self, batch, num_rec=1, chunksize=3, t=-1, par=None, **kwargs):
         """
@@ -70,17 +71,57 @@ class PyroRecommender(PyroModule):
         topk = torch.zeros((len(click_seq), num_rec), device=self.device)
 
         i = 0
-        for click_chunck, userId in zip(
+        for click_chunk, userId in zip(
             chunker(click_seq, chunksize),
             chunker(batch['userId'], chunksize)):
             pred, ht = self.predict_cond(
-                batch={'click' :click_chunck, 'userId' : userId}, t=t, par=par)
+                batch={'click' : click_chunk, 'userId' : userId}, t=t, par=par)
             topk_chunk = 3 + pred[:, 3:].argsort(dim=1,
                                                  descending=True)[:, :num_rec]
             topk[i:(i + len(pred))] = topk_chunk
             i += len(pred)
         return topk
+    @pyro_method
+    def recommend_inslate(self, batch, num_rec=1, chunksize=3, t=-1, par=None, **kwargs):
+        """
+        Inslate thompson recommendation.
+        Compute predict & rank on a batch in chunks (for memory)
+        Par can either be the string "real" or a function that outputs the parameters when called with a batch of data.
+        """
+        click_seq = batch['click']
+        topk = torch.zeros((len(click_seq), num_rec), device=self.device)
 
+        i = 0
+        for click_chunk, userId in zip(
+            chunker(click_seq, chunksize),
+            chunker(batch['userId'], chunksize)):
+
+            chunklen = len(click_chunk)
+            # Sample many posterior draws and collect topK:
+            topk_samples = torch.zeros((chunklen,num_rec,num_rec))
+            for s in range(num_rec):
+                pred, ht = self.predict_cond(
+                    batch={'click' : click_chunk, 'userId' : userId}, t=t, par=par)
+                topk_samples[:,:,s] = 3 + pred[:, 3:].argsort(dim=1,
+                                                        descending=True)[:, :num_rec]
+
+            # Flatten all topKs per users into a priorized list of shape [num_user, num_rec*num_rec]:
+            priority = topk_samples.view(chunklen, -1)
+
+            # Take the num_rec top unique items and return topk_chunk = [num_user, num_rec]
+            topk_chunk = torch.zeros((chunklen, num_rec))
+            for u in range(chunklen):
+                offset=0
+                for k in range(num_rec):
+                    # If item already exist, offset by one:
+                    while priority[u,k+offset] in topk_chunk[u]:
+                        offset += 1
+                    topk_chunk[u,k] = priority[u,k+offset]
+
+            # Fill into the general recommendation matrix:
+            topk[i:(i + len(pred))] = topk_chunk
+            i += len(pred)
+        return topk
     def visualize_item_space(self):
         if self.item_dim ==2:
             V = self.par_real['item_model.itemvec.weight'].cpu()
