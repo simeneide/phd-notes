@@ -67,23 +67,35 @@ class Simulator(Dataset):
         
         self.reset_data()
 
-    def reset_data(self):
-        with torch.no_grad():
-            self.pos = 0  # counter when adding
+    ## SIMULATOR FUNCTIONS
+    @torch.no_grad()
+    def reset_data(self, data=None):
+        """ 
+        Reset data. If data and t_start is supplied, it is reset to that state
+        Data has to be as in the dataloader e.g. 
+        - the action tensor is of shape [num_users, maxlen_time, maxlen_slate]
+        - zero-padded for time that havent happened yet.
+        """
+        self.pos = 0  # counter when adding
 
-            self.data = {
-                'userId':
-                torch.arange(self.num_users),
-                'action':
-                torch.zeros((self.num_users, self.maxlen_time,
-                             self.maxlen_slate)).long().to(self.device),
-                'click':
-                torch.zeros(
-                    (self.num_users, self.maxlen_time)).long().to(self.device),
-                'click_idx':
-                torch.zeros(
-                    (self.num_users, self.maxlen_time)).long().to(self.device)
-            }
+        self.data = {
+            'userId':
+            torch.arange(self.num_users),
+            'action':
+            torch.zeros((self.num_users, self.maxlen_time,
+                            self.maxlen_slate)).long().to(self.device),
+            'click':
+            torch.zeros(
+                (self.num_users, self.maxlen_time)).long().to(self.device),
+            'click_idx':
+            torch.zeros(
+                (self.num_users, self.maxlen_time)).long().to(self.device)
+        }
+
+        if data is not None:
+            logging.info("When reseting data, insert given data..")
+            for key, val in  data.items():
+                self.data[key] = val
 
     ## DATASET FUNCTIONS
     def __len__(self):
@@ -159,21 +171,22 @@ class Simulator(Dataset):
 
         return self.return_data(), reward, done
 
-    def play_game(self, agent_function, userIds = None, t_end = None, **kwargs):
+    def play_game(self, agent_function, userIds = None, t_start=0, t_end = None, **kwargs):
         """ Play a full game with a given environment function and a given agent function"""
         if t_end is None:
             t_end = self.maxlen_time
         # Sample U_b users with no interactions:
-        batch = self.reset(userIds=userIds)
+        batch = self.reset(userIds=userIds, t_start=t_start)
 
-        reward = torch.zeros((len(self.batch_user), t_end ))
-        for t in range(t_end):
+        reward = torch.zeros((len(self.batch_user), t_end - t_start))
+        for t in range(t_start, t_end): 
+            assert t == self.t # make sure internal counter and playgame counter is in sync.
             # Let agent recommend:
             action = agent_function(batch=batch, num_rec=self.maxlen_slate -
                                     1, **kwargs).to(self.device)
             #print(action)
             # Let environment generate a click and return an updated user history
-            batch, reward[:,t], done = self.step(action)
+            batch, reward[:,t-t_start], done = self.step(action)
             if done is True:
                 return reward
         return reward  # return avg cum reward

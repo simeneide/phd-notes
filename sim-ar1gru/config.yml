@@ -4,27 +4,34 @@
 real_data: False
 item_dim: 2
 hidden_dim: 2
-num_users: 500
+num_users: 4000
 maxlen_time: 20
 maxlen_slate: 4
-num_items: 50
-num_groups: 5
-softmax_mult: 2.0 # multiply all softmax with this
+num_items: 150
+num_groups: 10
+softmax_mult: 3.0 # multiply all softmax with this
 bias_noclick: 1.0
-num_test_users: 300
+num_test_users: 2000
 t_testsplit: 10
-device: cpu
-model_type: ar1
-# Priors
-prior_groupvec_scale: 1.0 #0.1
-prior_groupscale_scale: 1.0 #0.1
-prior_userinit_scale: 1.0 #0.1
+device: cuda
+model_type: rnn
+### Priors
+prior_groupvec_scale: 1.0
+prior_groupscale_scale: 1.0
+prior_userinit_scale: 1.0
 guide_userinit: True
 guide_maxscale: 10.0
+prior_bias_scale: 1.0
+# AR(1) priors
+prior_gamma_mean: 0.5
+prior_gamma_scale: 20.0
+#RNN priors
+prior_rnn_scale: 3.0
 
 # TRAINING PARAMETERS
 start_true: False
 batch_size: 100
-learning_rate: 0.05
-patience: 60
+learning_rate: 0.01
+patience: 100
+calc_footrule: False
 # 

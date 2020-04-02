@@ -146,12 +146,12 @@ class AR_Model(PyroRecommender):
 
         # Set priors on parameters:
         self.item_model = ItemHier(**kwargs)
-        self.gamma = PyroSample( dist.Normal(torch.tensor(0.5),torch.tensor(0.2)) )
+        self.gamma = PyroSample( dist.Normal(torch.tensor( self.prior_gamma_mean),torch.tensor(self.prior_gamma_scale)) )
         self.softmax_mult = self.softmax_mult # PyroSample( prior = dist.Normal(torch.tensor(1.0), torch.tensor(1.0)))
         self.bias_noclick = PyroSample(
             prior = dist.Normal(
                 torch.zeros((self.maxlen_slate +1,)),
-                5*torch.ones( (self.maxlen_slate +1,))
+                self.prior_bias_scale * torch.ones( (self.maxlen_slate +1,))
             ))
 
     def init_set_of_real_parameters(self, seed = 1):
@@ -307,13 +307,12 @@ class RNN_Model(PyroRecommender):
             hidden_size=self.hidden_dim,
             bias=False)
 
-        set_noninform_prior(self.rnn)
-        #self.gamma = PyroSample( dist.Normal(torch.tensor(0.5),torch.tensor(0.2)) )
+        set_noninform_prior(self.rnn, scale = self.prior_rnn_scale)
         self.softmax_mult = self.softmax_mult # PyroSample( prior = dist.Normal(torch.tensor(1.0), torch.tensor(1.0)))
         self.bias_noclick = PyroSample(
             prior = dist.Normal(
                 torch.zeros((self.maxlen_slate +1,)),
-                5*torch.ones( (self.maxlen_slate +1,))
+                self.prior_bias_scale*torch.ones( (self.maxlen_slate +1,))
             ))
 
     def init_set_of_real_parameters(self, seed = 1):

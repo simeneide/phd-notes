@@ -14,7 +14,7 @@ import os
 from torch.utils.tensorboard import SummaryWriter
 logging.basicConfig(format='%(asctime)s %(message)s', level='INFO')
 from pyro import poutine
-
+import copy
 
 class PyroTrainer:
     def __init__(self,
@@ -25,6 +25,7 @@ class PyroTrainer:
                  max_epoch=100,
                  param=None,
                  report_param_histogram=False,
+                 calc_footrule=True,
                  **kwargs):
         self.model = model
         self.guide = guide
@@ -33,6 +34,7 @@ class PyroTrainer:
         self.max_epoch = max_epoch
         self.param = param
         self.report_param_histogram = report_param_histogram
+        self.calc_footrule = calc_footrule
         self.init_opt(lr=self.learning_rate)
         self.step = 0  # global step counter (counts datapoints)
         self.earlystop = EarlyStoppingAndCheckpoint(**kwargs)
@@ -207,46 +209,48 @@ class RecTrainer(PyroTrainer):
         # calculate rewards:
         if self.sim:
             ### SIMULATE REWARDS..:
-            self.dataloaders['train'].dataset.data['userId']
-            # Thompson recommendation:
-            logging.info("compute NORMAL reward..")
-            self.sim.reset_data()
-            all_rewards = self.sim.play_game(
-                self.model.recommend,
-                par=self.guide,
-                userIds=self.dataloaders['train'].dataset.data['userId'])
+            rec_types = {
+                'inslate' : self.model.recommend,
+                'thompson' : self.model.recommend_inslate}
 
-            train_mask = self.dataloaders['train'].dataset.data['mask_train']
-            self.epoch_log[-1]['train/reward'] = (
-                all_rewards * train_mask).sum() / train_mask.sum()
-            self.epoch_log[-1]['valid/reward'] = (
-                all_rewards * (1 - train_mask)).sum() / (1 - train_mask).sum()
+            for rectype, recommend_func in rec_types.items():
+                logging.info(f"compute {rectype} reward..")
+                t_start = 10
+                current_data = copy.deepcopy(self.dataloaders['train'].dataset.data)
+                
+                # zero pad the period we want to test:
+                for key, val in current_data.items():
+                    if key not in ["userId", "mask_train"]:
+                        current_data[key][:,t_start:] = 0
 
-            # Inslate recommendations:
-            logging.info("compute inslate reward..")
-            self.sim.reset_data()
-            all_rewards = self.sim.play_game(
-                self.model.recommend_inslate,
-                par=self.guide,
-                userIds=self.dataloaders['train'].dataset.data['userId'])
+                self.sim.reset_data(data=current_data)
+                all_rewards = self.sim.play_game(
+                    recommend_func,
+                    par=self.guide,
+                    userIds = current_data['userId'],
+                    t_start=t_start
+                    )
 
-            train_mask = self.dataloaders['train'].dataset.data['mask_train']
-            self.epoch_log[-1]['train/reward-inslate'] = (
-                all_rewards * train_mask).sum() / train_mask.sum()
-            self.epoch_log[-1]['valid/reward-inslate'] = (
-                all_rewards * (1 - train_mask)).sum() / (1 - train_mask).sum()
+                train_mask = current_data['mask_train'][:,t_start:]
+                self.epoch_log[-1][f'train/reward-{rectype}'] = (
+                    all_rewards * train_mask).sum() / train_mask.sum()
+
+                self.epoch_log[-1][f'valid/reward-{rectype}'] = (
+                    all_rewards * (1 - train_mask)).sum() / (1 - train_mask).sum()
 
             ### CALC FOOTRULE DISTANCE BETWEEN REAL AND ESTIMATED RECS:
             # calc for all data at last timestep:
-            num_items = self.param['num_items']-3
-            argsort_real = self.model.recommend(self.dataloaders['train'].dataset.data, par="real", num_rec = num_items)
-            argsort_estimated = self.model.recommend(self.dataloaders['train'].dataset.data, par=self.guide, num_rec = num_items)
-            rank_real = argsort2rank_matrix(argsort_real.long(), num_items = num_items+3)
-            rank_estimated = argsort2rank_matrix(argsort_estimated.long(), num_items = num_items+3)
-            
-            train_idx = train_mask[:,-1]
-            self.epoch_log[-1][f'train/footrule'] = dist_footrule(rank_real[train_idx.bool()], rank_estimated[train_idx.bool()])
-            self.epoch_log[-1][f'valid/footrule'] = dist_footrule(rank_real[(1-train_idx).bool()], rank_estimated[(1-train_idx).bool()])
+            if self.calc_footrule:
+                logging.info("Compute FOOTRULE distance..")
+                num_items = self.param['num_items']-3
+                argsort_real = self.model.recommend(self.dataloaders['train'].dataset.data, par="real", num_rec = num_items)
+                argsort_estimated = self.model.recommend(self.dataloaders['train'].dataset.data, par=self.guide, num_rec = num_items)
+                rank_real = argsort2rank_matrix(argsort_real.long(), num_items = num_items+3)
+                rank_estimated = argsort2rank_matrix(argsort_estimated.long(), num_items = num_items+3)
+                
+                train_idx = train_mask[:,-1]
+                self.epoch_log[-1][f'train/footrule'] = dist_footrule(rank_real[train_idx.bool()], rank_estimated[train_idx.bool()])
+                self.epoch_log[-1][f'valid/footrule'] = dist_footrule(rank_real[(1-train_idx).bool()], rank_estimated[(1-train_idx).bool()])
 
 
         ### Add hyperparameters and final metrics to hparam:

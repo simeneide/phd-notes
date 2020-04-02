@@ -114,7 +114,7 @@ logging.info(f"mean( std(v_j)): {torch.std(V, dim = 0).mean()}")
 logging.info(f"mean( std(h0^u)): {torch.std(par['h0-batch'], dim = 0).mean()}")
 #plt.scatter(par['h0-batch'].mean(0))
 # %%
-t0 = 9000
+#t0 = 9000
 Vg = par['item_model.groupvec.weight']
 
 Vg.size()
@@ -141,7 +141,11 @@ h0 = par['h0-batch']
 t0 = 0
 for t0 in [0,2500, 5000, 7500]:
     for i in range(3):
-        plt.scatter(h0[t0:(t0+1000),i,0], h0[t0:(t0+1000),i,1])
+        plt.scatter(h0[t0:(t0+1000),i,0], h0[t0:(t0+1000),i,1], alpha = 0.2)
     plt.show()
 
 # %%
+plt.hist(h0[:2000,0,0])
+plt.hist(h0[:2000,0,1])
+
+plt.scatter(h0[:2000,0,0], h0[:2000,0,1])
