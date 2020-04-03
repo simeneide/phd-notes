@@ -16,6 +16,8 @@ import models
 import agents
 
 def collect_simulated_data(sim, policy_epsilon=0.5, **kwargs):
+    torch.manual_seed(0)
+    random.seed(0)
     randomagent = agents.RandomSystem(num_items=kwargs['num_items'],
                                       maxlen_slate=kwargs['maxlen_slate'])
 
