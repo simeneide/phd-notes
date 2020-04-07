@@ -14,7 +14,6 @@ from torch.utils.data import DataLoader
 from torch.utils.data import Dataset
 logging.basicConfig(format='%(asctime)s %(message)s', level='INFO')
 import warnings
-#import simulator
 import seaborn as sns
 
 
@@ -22,7 +21,12 @@ def score_euclidean(x,y):
     return - (((x-y)**2).sum(-1)+1e-10).sqrt()
 def score_dot(x,y):
     return (x*y).sum(-1)
+def score_cosine(x,y):
+    score_dot(x,y) / (score_dot(x,x)*score_dot(y,y)).sqrt()
 
+scorefunctions = {
+    'l2' : score_euclidean,
+    'dot': score_dot}
 
 ### WRAPPER FOR MODELS:
 def chunker(seq, size):
@@ -160,18 +164,20 @@ class AR_Model(PyroRecommender):
                 self.prior_bias_scale * torch.ones( (self.maxlen_slate +1,))
             ))
 
+        self.scorefunc = scorefunctions[self.dist]
+
     def init_set_of_real_parameters(self, seed = 1):
         torch.manual_seed(seed)
         par_real = {}
 
-        par_real['softmax_mult'] =  torch.tensor(self.softmax_mult).float()
+        par_real['softmax_mult'] =  torch.tensor(self.true_softmax_mult).float()
         par_real['gamma'] = torch.tensor(0.9)
-        par_real['bias_noclick'] = self.bias_noclick * torch.ones( (self.maxlen_slate +1,))
+        par_real['bias_noclick'] = self.true_bias_noclick * torch.ones( (self.maxlen_slate +1,))
 
         groupvec = generate_random_points_on_d_surface(
             d=self.item_dim, 
             num_points=self.num_groups, 
-            radius= torch.rand((self.num_groups,1) ),
+            radius= 0.5 + 0.5*torch.rand((self.num_groups,1) ),
             max_angle=3.14)
             
         par_real['item_model.groupvec.weight'] = groupvec
@@ -245,7 +251,7 @@ class AR_Model(PyroRecommender):
             if mode =="predict":
                 
                 zt_last = Z[:, t, ]
-                score = score_euclidean(zt_last.unsqueeze(1), itemvec.unsqueeze(0))
+                score = self.scorefunc(zt_last.unsqueeze(1), itemvec.unsqueeze(0))
                 return score, H
 
             target_idx = batch['click_idx']
@@ -253,7 +259,7 @@ class AR_Model(PyroRecommender):
             action_vecs = itemvec[batch['action']]
 
             # Compute scores for all actions by recommender
-            scores = score_euclidean(Z[:,:t_maxclick].unsqueeze(2), action_vecs)
+            scores = self.scorefunc(Z[:,:t_maxclick].unsqueeze(2), action_vecs)
 
             scores = scores*softmax_mult
 
@@ -316,6 +322,8 @@ class RNN_Model(PyroRecommender):
                 torch.zeros((self.maxlen_slate +1,)),
                 self.prior_bias_scale*torch.ones( (self.maxlen_slate +1,))
             ))
+
+        self.scorefunc = scorefunctions[self.dist]
 
     def init_set_of_real_parameters(self, seed = 1):
         torch.manual_seed(seed)
@@ -408,7 +416,7 @@ class RNN_Model(PyroRecommender):
         if mode =="predict":
             
             zt_last = Z[:, t, ]
-            score = score_euclidean(zt_last.unsqueeze(1), itemvec.unsqueeze(0))
+            score = self.scorefunc(zt_last.unsqueeze(1), itemvec.unsqueeze(0))
             return score, H
 
         target_idx = batch['click_idx']
@@ -419,7 +427,7 @@ class RNN_Model(PyroRecommender):
         action_vecs = itemvec[batch['action']]
 
         # Compute scores for all actions by recommender
-        scores = score_euclidean(Z[:,:t_maxclick].unsqueeze(2), action_vecs)
+        scores = self.scorefunc(Z[:,:t_maxclick].unsqueeze(2), action_vecs)
 
         scores = scores*softmax_mult
 
@@ -581,10 +589,10 @@ class MeanFieldGuide:
 
             else:
                 mean = pyro.param(f"{node}-mean",
-                                    init_tensor= par.detach().clone())
+                                    init_tensor= 0.001*par.detach().clone())
                 scale = pyro.param(f"{node}-scale",
                                     init_tensor=0.05 +
-                                    0.1 * par.detach().clone().abs(),
+                                    0.01 * par.detach().clone().abs(),
                                     constraint=constraints.interval(0,self.maxscale))
                 posterior[node] = pyro.sample(
                     node,

@@ -19,8 +19,7 @@ from prepare import SequentialDataset
 #%%
 def main(**kwargs):
         param = utils.load_param()
-        if param['device'] == "cuda":
-            torch.set_default_tensor_type('torch.cuda.FloatTensor')
+
             
         # Overwrite param with whatever is in kwargs:
         try:
@@ -30,9 +29,10 @@ def main(**kwargs):
         except:
             logging.info("Did no overwrite of default param.")
 
+        if param['device'] == "cuda":
+            torch.set_default_tensor_type('torch.cuda.FloatTensor')
         if param.get('real_data'):
             logging.info("Loading real data")
-
 
             ind2val, itemattr, dataloaders = prepare.load_dataloaders(
                     data_dir="data_real",
@@ -94,7 +94,7 @@ def main(**kwargs):
         trainer = pyrotrainer.RecTrainer(model=model,
                                         guide=guide,
                                         dataloaders = dataloaders,
-                                        max_epoch=1000,
+                                        max_epoch=param['max_epochs'],
                                         name=param['name'],
                                         param=param,
                                         patience=param['patience'],
