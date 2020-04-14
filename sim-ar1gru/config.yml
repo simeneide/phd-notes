@@ -36,7 +36,7 @@ prior_rnn_scale: 3.0
 max_epochs : 5000
 start_true: False
 batch_size: 100
-learning_rate: 0.05
+learning_rate: 0.02
 patience: 100
 calc_footrule: False
 # 
