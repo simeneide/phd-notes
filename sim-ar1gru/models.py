@@ -215,40 +215,41 @@ class AR1_Model(PyroRecommender):
 
     @pyro_method
     def forward(self, batch, mode = "likelihood", t=None):
-        click_seq = batch['click']
-        userIds = batch['userId']
+        with poutine.scale(scale=self.prior_scale): # scale all prior params here
+            click_seq = batch['click']
+            userIds = batch['userId']
 
-        batch_size, t_maxclick = batch['click'].size()
-        # sample item dynamics
-        itemvec = self.item_model()
-        click_vecs = itemvec[click_seq]
+            batch_size, t_maxclick = batch['click'].size()
+            # sample item dynamics
+            itemvec = self.item_model()
+            click_vecs = itemvec[click_seq]
 
-        # Sample user dynamic parameters:
-        softmax_mult = self.softmax_mult
-        bias_noclick = self.bias_noclick
-        gamma = self.gamma
+            # Sample user dynamic parameters:
+            softmax_mult = self.softmax_mult
+            bias_noclick = self.bias_noclick
+            gamma = self.gamma
 
-        with pyro.plate("user-init-plate", size = self.num_users, subsample = userIds):
-            ## USER PROFILE
-            # container for all hidden states:
+            with pyro.plate("user-init-plate", size = self.num_users, subsample = userIds):
+                ## USER PROFILE
+                # container for all hidden states:
 
-            # Sample initial hidden state of users:
-            h0 = pyro.sample("h0-batch", 
-            dist.Normal(
-                torch.zeros((batch_size, self.hidden_dim)), 
-                self.prior_userinit_scale*torch.ones((batch_size, self.hidden_dim))
-                ).to_event(1)
-                )
+                # Sample initial hidden state of users:
+                h0 = pyro.sample("h0-batch", 
+                dist.Normal(
+                    torch.zeros((batch_size, self.hidden_dim)), 
+                    self.prior_userinit_scale*torch.ones((batch_size, self.hidden_dim))
+                    ).to_event(1)
+                    )
 
-        H = torch.zeros( (batch_size, t_maxclick+1, self.hidden_dim))
+            H = torch.zeros( (batch_size, t_maxclick+1, self.hidden_dim))
 
-        H_list = [h0]
-        for t in range(t_maxclick):
-            h_new = gamma * H_list[-1] + (1-gamma)*click_vecs[:,t]
-            H_list.append(h_new)
+            H_list = [h0]
+            for t in range(t_maxclick):
+                h_new = gamma * H_list[-1] + (1-gamma)*click_vecs[:,t]
+                H_list.append(h_new)
 
-        H = torch.cat( [h.unsqueeze(1) for h in H_list], dim =1)
-        Z = H # linear from hidden to Z_t
+            H = torch.cat( [h.unsqueeze(1) for h in H_list], dim =1)
+            Z = H # linear from hidden to Z_t
 
 
         # NB: DOES NOT WORK FOR LARGE BATCHES:
