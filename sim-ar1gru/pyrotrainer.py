@@ -142,6 +142,12 @@ class RecTrainer(PyroTrainer):
         self.sim = kwargs.get("sim")
         self.device = kwargs.get("device", "cpu")
 
+        self.checksum_data()
+
+    @torch.no_grad()
+    def checksum_data(self):
+        checksum = sum([val.float().mean() for key, val in self.dataloaders['train'].dataset.data.items()])
+        self.writer.add_scalar("data_checksum", checksum, global_step=0)
 
     def training_step(self, batch):
         batch = {key: val.long().to(self.device) for key, val in batch.items()}
@@ -272,7 +278,7 @@ class RecTrainer(PyroTrainer):
         fig = plt.figure()
         plt.scatter(h0[:, 0],
                     h0[:, 1],
-                    c=self.model.user_init[:num_plot_users].cpu(),
+                    c=self.sim.env.user_init[:num_plot_users].cpu(),
                     alpha=0.1)
         self.writer.add_figure('h0', fig, 0)
 

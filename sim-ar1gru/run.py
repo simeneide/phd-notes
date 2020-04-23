@@ -19,8 +19,7 @@ from prepare import SequentialDataset
 #%%
 def main(**kwargs):
         param = utils.load_param()
-        if param['device'] == "cuda":
-            torch.set_default_tensor_type('torch.cuda.FloatTensor')
+
             
         # Overwrite param with whatever is in kwargs:
         try:
@@ -30,9 +29,10 @@ def main(**kwargs):
         except:
             logging.info("Did no overwrite of default param.")
 
+        if param['device'] == "cuda":
+            torch.set_default_tensor_type('torch.cuda.FloatTensor')
         if param.get('real_data'):
             logging.info("Loading real data")
-
 
             ind2val, itemattr, dataloaders = prepare.load_dataloaders(
                     data_dir="data_real",
@@ -56,12 +56,14 @@ def main(**kwargs):
             # %% TRAIN: MODEL+CALLBACKS+TRAINER
             pyro.clear_param_store()
             env = models.AR_Model(**param, item_group=torch.tensor(itemattr['category']))
+            env.init_set_of_real_parameters()
             sim = simulator.Simulator(**param, env=env)
             ind2val, itemattr, dataloaders, sim = simulator.collect_simulated_data(
                 sim, policy_epsilon=0.5, **param)
 
         #%%
         pyro.clear_param_store()
+        torch.manual_seed(param['train_seed'])
         import pyrotrainer
         dummybatch = next(iter(dataloaders['train']))
         dummybatch['phase_mask'] = dummybatch['mask_train']
@@ -78,7 +80,7 @@ def main(**kwargs):
         if param.get("start_true"):
             logging.info(f"Starting in true mean parameters...:")
             pyro.clear_param_store()
-            for key, val in model.par_real.items():
+            for key, val in env.par_real.items():
                 pyro.param(f"{key}-mean", val)
                 pyro.param(f"{key}-scale", torch.zeros_like(val)+ 1e-5)
                 print(key)
@@ -92,7 +94,7 @@ def main(**kwargs):
         trainer = pyrotrainer.RecTrainer(model=model,
                                         guide=guide,
                                         dataloaders = dataloaders,
-                                        max_epoch=1000,
+                                        max_epoch=param['max_epochs'],
                                         name=param['name'],
                                         param=param,
                                         patience=param['patience'],
