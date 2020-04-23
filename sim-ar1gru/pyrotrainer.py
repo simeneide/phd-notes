@@ -202,11 +202,11 @@ class RecTrainer(PyroTrainer):
         model_trace = poutine.trace(model_with_guidepar).get_trace(batch)
         model_trace.compute_log_prob()
         guide_trace.compute_log_prob()
-        stats['logguide'] = guide_trace.log_prob_sum().item()
+        logguide = guide_trace.log_prob_sum().item()
         stats['loglik'] = model_trace.nodes['obs']['log_prob'].sum()
-        stats['totlogprob'] = model_trace.log_prob_sum().item()
-        stats['logprior'] = stats['totlogprob'] - stats['loglik']
-        stats['KL_pq'] = stats['logguide'] - stats['logprior']
+        totlogprob = model_trace.log_prob_sum().item()
+        logprior = totlogprob - stats['loglik']
+        stats['KL_pq'] = logguide - logprior
         stats['elbo'] = stats['loglik'] - stats['KL_pq']
         return stats
 
