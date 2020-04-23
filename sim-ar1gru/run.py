@@ -56,7 +56,7 @@ def main(**kwargs):
 
             # %% TRAIN: MODEL+CALLBACKS+TRAINER
             pyro.clear_param_store()
-            env = models.AR_Model(**param, item_group=torch.tensor(itemattr['category']))
+            env = models.AR1_Model(**param, item_group=torch.tensor(itemattr['category']))
             env.init_set_of_real_parameters()
             sim = simulator.Simulator(**param, env=env)
             ind2val, itemattr, dataloaders, sim = simulator.collect_simulated_data(

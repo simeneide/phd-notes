@@ -206,8 +206,8 @@ class RecTrainer(PyroTrainer):
         stats['loglik'] = model_trace.nodes['obs']['log_prob'].sum()
         stats['totlogprob'] = model_trace.log_prob_sum().item()
         stats['logprior'] = stats['totlogprob'] - stats['loglik']
-        stats['KL_pq'] = stats['logprior'] - stats['logguide']
-        stats['elbo'] = stats['loglik'] + stats['KL_pq']
+        stats['KL_pq'] = stats['logguide'] - stats['logprior']
+        stats['elbo'] = stats['loglik'] - stats['KL_pq']
         return stats
 
     def end_of_training(self):
