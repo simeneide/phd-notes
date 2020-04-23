@@ -1,4 +1,5 @@
 #%%
+import setGPU
 import torch
 import utils
 import matplotlib.pyplot as plt
@@ -19,7 +20,6 @@ from prepare import SequentialDataset
 #%%
 def main(**kwargs):
         param = utils.load_param()
-
             
         # Overwrite param with whatever is in kwargs:
         try:
@@ -37,15 +37,16 @@ def main(**kwargs):
             ind2val, itemattr, dataloaders = prepare.load_dataloaders(
                     data_dir="data_real",
                     data_type="lake-noclickrate-0.2",
-                    batch_size=1024,
+                    batch_size=512,
                     split_trainvalid=0.95,
                     num_workers=0,
-                    override_candidate_sampler="actual")
+                    override_candidate_sampler="actual",
+                    t_testsplit = param['t_testsplit'])
 
             param['num_items'] = len(ind2val['itemId'])
             param['num_groups'] = len(np.unique(itemattr['category']))
-            param['num_users'], param['maxlen_time'], param['maxlen_slate'] = dataloaders['train'].dataset.dataset.data['action'].size()
-            dataloaders['train'].dataset.dataset.data['userId'] = torch.arange(0, param['num_users'])
+            param['num_users'], param['maxlen_time'], param['maxlen_slate'] = dataloaders['train'].dataset.data['action'].size()
+            dataloaders['train'].dataset.data['userId'] = torch.arange(0, param['num_users'])
         else:
             #%% Place all items in a group:
             item_group = 1 + (torch.arange(param['num_items']) //
@@ -63,6 +64,7 @@ def main(**kwargs):
 
         #%%
         pyro.clear_param_store()
+        pyro.validation_enabled(True)
         torch.manual_seed(param['train_seed'])
         import pyrotrainer
         dummybatch = next(iter(dataloaders['train']))
@@ -72,7 +74,7 @@ def main(**kwargs):
         if param['model_type'] == "rnn":
             model = models.RNN_Model(**param, item_group=torch.tensor(itemattr['category']).long())
         elif param['model_type'] == "ar1":
-            model = models.AR_Model(**param, item_group=torch.tensor(itemattr['category']).long())
+            model = models.AR1_Model(**param, item_group=torch.tensor(itemattr['category']).long())
             
         guide = models.MeanFieldGuide(model=model, batch=dummybatch, **param)
 
