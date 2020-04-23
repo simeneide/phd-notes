@@ -141,8 +141,8 @@ class RecTrainer(PyroTrainer):
         super().__init__(**kwargs)
         self.sim = kwargs.get("sim")
         self.device = kwargs.get("device", "cpu")
-
-        self.checksum_data()
+        if self.sim:
+            self.checksum_data()
 
     @torch.no_grad()
     def checksum_data(self):
@@ -264,13 +264,6 @@ class RecTrainer(PyroTrainer):
                                 metric_dict=self.epoch_log[-1])
 
         # Visualize item vectors:
-
-        # %% PLOT OF item vector parameters
-        V = pyro.param('item_model.itemvec.weight-mean').detach().cpu()
-        fig = plt.figure()
-        plt.scatter(V[:, 0], V[:, 1], c=self.model.item_model.item_group.cpu())
-        self.writer.add_figure('V', fig, 0)
-
         # %% PLOT OF H0 parameters of users
         num_plot_users = 1000
         h0 = pyro.param("h0-mean").detach().cpu()[:num_plot_users]  
@@ -281,6 +274,14 @@ class RecTrainer(PyroTrainer):
                     c=self.sim.env.user_init[:num_plot_users].cpu(),
                     alpha=0.1)
         self.writer.add_figure('h0', fig, 0)
+        
+        # %% PLOT OF item vector parameters
+        V = pyro.param('item_model.itemvec.weight-mean').detach().cpu()
+        fig = plt.figure()
+        plt.scatter(V[:, 0], V[:, 1], c=self.model.item_model.item_group.cpu())
+        self.writer.add_figure('V', fig, 0)
+
+
 
 
 class EarlyStoppingAndCheckpoint:
