@@ -157,7 +157,7 @@ class AR1_Model(PyroRecommender):
         # Set priors on parameters:
         self.item_model = ItemHier(**kwargs)
         self.gamma = PyroSample( dist.Normal(torch.tensor( self.prior_gamma_mean),torch.tensor(self.prior_gamma_scale)) )
-        self.softmax_mult = PyroSample( prior = dist.Normal(torch.tensor(1.0), self.softmax_mult *torch.tensor(1.0))) # self.softmax_mult
+        self.softmax_mult = PyroSample( prior = dist.Normal(torch.tensor(1.0), self.prior_softmax_mult_scale *torch.tensor(1.0)))
         self.bias_noclick = PyroSample(
             prior = dist.Normal(
                 torch.zeros((self.maxlen_slate +1,)),
@@ -323,7 +323,7 @@ class RNN_Model(PyroRecommender):
             bias=False)
 
         set_noninform_prior(self.rnn, scale = self.prior_rnn_scale)
-        self.softmax_mult = PyroSample( prior = dist.Normal(torch.tensor(1.0), self.softmax_mult *torch.tensor(1.0))) # self.softmax_mult
+        self.softmax_mult = PyroSample( prior = dist.Normal(torch.tensor(1.0), self.prior_softmax_mult_scale *torch.tensor(1.0)))
         self.bias_noclick = PyroSample(
             prior = dist.Normal(
                 torch.zeros((self.maxlen_slate +1,)),
@@ -336,7 +336,7 @@ class RNN_Model(PyroRecommender):
         torch.manual_seed(seed)
         par_real = {}
 
-        par_real['softmax_mult'] =  torch.tensor(self.softmax_mult).float()
+        par_real['softmax_mult'] =  torch.tensor(self.true_softmax_mult).float()
         par_real['gamma'] = torch.tensor(0.9)
         par_real['bias_noclick'] = self.bias_noclick * torch.ones( (self.maxlen_slate +1,))
 

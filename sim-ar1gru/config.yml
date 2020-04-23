@@ -8,18 +8,17 @@ hidden_dim: 2
 num_users: 1000
 maxlen_time: 20
 maxlen_slate: 5
-num_items: 1000
+num_items: 500
 num_groups: 200
 true_softmax_mult: 5.0 # multiply all softmax with this
-softmax_mult: 3.0 # multiply all softmax with this
-true_bias_noclick: 2.0
-num_test_users: 500
+num_test_users: 100
 t_testsplit: 5
 device: cpu
 model_type: ar1
 dist: "l2"
 
 ### Priors
+prior_softmax_mult_scale: 3.0
 prior_groupvec_scale: 1.0
 prior_groupscale_scale: 1.0
 prior_userinit_scale: 1.0
