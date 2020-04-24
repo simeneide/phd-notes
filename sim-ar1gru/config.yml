@@ -12,6 +12,7 @@ num_items: 500
 num_groups: 50
 true_softmax_mult: 5.0 # multiply all softmax with this
 true_bias_noclick: 2.0
+true_step_scale: 0.02
 num_test_users: 100
 t_testsplit: 5
 device: cpu
@@ -19,6 +20,7 @@ model_type: ar1
 dist: "l2"
 
 ### Priors
+prior_step_scale: 0.1
 prior_scale: 0.01
 prior_softmax_mult_scale: 3.0
 prior_groupvec_scale: 1.0

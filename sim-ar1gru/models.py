@@ -150,6 +150,7 @@ class PyroRecommender(PyroModule):
 
     def eval(self):
         self.trainmode=False
+
 class AR1_Model(PyroRecommender):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -158,6 +159,8 @@ class AR1_Model(PyroRecommender):
         self.item_model = ItemHier(**kwargs)
         self.gamma = PyroSample( dist.Normal(torch.tensor( self.prior_gamma_mean),torch.tensor(self.prior_gamma_scale)) )
         self.softmax_mult = PyroSample( prior = dist.Normal(torch.tensor(1.0), self.prior_softmax_mult_scale *torch.tensor(1.0)))
+        self.step_scale = PyroSample( prior = dist.HalfNormal(torch.tensor(self.prior_step_scale)+0.001))
+
         self.bias_noclick = PyroSample(
             prior = dist.Normal(
                 torch.zeros((self.maxlen_slate +1,)),
@@ -169,6 +172,8 @@ class AR1_Model(PyroRecommender):
     def init_set_of_real_parameters(self, seed = 1):
         torch.manual_seed(seed)
         par_real = {}
+
+        par_real['step_scale'] = torch.tensor(self.true_step_scale).float()
 
         par_real['softmax_mult'] =  torch.tensor(self.true_softmax_mult).float()
         par_real['gamma'] = torch.tensor(0.9)
@@ -227,6 +232,7 @@ class AR1_Model(PyroRecommender):
             # Sample user dynamic parameters:
             softmax_mult = self.softmax_mult
             bias_noclick = self.bias_noclick
+            step_scale = self.step_scale
             gamma = self.gamma
 
             with pyro.plate("user-init-plate", size = self.num_users, subsample = userIds):
@@ -241,11 +247,12 @@ class AR1_Model(PyroRecommender):
                     ).to_event(1)
                     )
 
-            H = torch.zeros( (batch_size, t_maxclick+1, self.hidden_dim))
 
+            H = torch.zeros( (batch_size, t_maxclick+1, self.hidden_dim))
             H_list = [h0]
             for t in range(t_maxclick):
-                h_new = gamma * H_list[-1] + (1-gamma)*click_vecs[:,t]
+                h_new_mean = gamma * H_list[-1] + (1-gamma)*click_vecs[:,t]
+                h_new = pyro.sample(f"h_{t}", dist.Normal(h_new_mean, step_scale*torch.ones_like(h_new_mean)))
                 H_list.append(h_new)
 
             H = torch.cat( [h.unsqueeze(1) for h in H_list], dim =1)
@@ -594,6 +601,15 @@ class MeanFieldGuide:
                     posterior[node] = pyro.sample(
                         node,
                         dist.Normal(mean[batch['userId']], temp*scale[batch['userId']]).to_event(1))
+            elif node == "step_scale":
+                scale = pyro.param(f"noise-scale", init_tensor=torch.tensor(0.05))
+                posterior[node] = pyro.sample(node, dist.Normal(scale, 0.05))
+            elif node[:2] == "h_":
+                scale = pyro.param(f"noise-scale", init_tensor=torch.tensor(0.05))
+                posterior[node] = pyro.sample(
+                        node,
+                        dist.Normal(torch.zeros((len(batch['userId']), self.hidden_dim )), scale*temp*torch.ones((len(batch['userId']), self.hidden_dim ))))
+
             elif (node == "user-init-plate") | (node == "data"):
                 pass
             else:
