@@ -232,7 +232,7 @@ class RecTrainer(PyroTrainer):
                 self.sim.reset_data(data=current_data)
                 all_rewards = self.sim.play_game(
                     recommend_func,
-                    par=self.guide,
+                    par=lambda batch: self.guide(batch, temp=1.0),
                     userIds = current_data['userId'],
                     t_start=t_start
                     )
@@ -280,6 +280,8 @@ class RecTrainer(PyroTrainer):
         fig = plt.figure()
         plt.scatter(V[:, 0], V[:, 1], c=self.model.item_model.item_group.cpu())
         self.writer.add_figure('V', fig, 0)
+
+        self.writer.flush() #flush all to disk before we stop
 
 
 
