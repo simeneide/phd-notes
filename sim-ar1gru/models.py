@@ -150,6 +150,7 @@ class PyroRecommender(PyroModule):
 
     def eval(self):
         self.trainmode=False
+
 class AR1_Model(PyroRecommender):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -171,7 +172,7 @@ class AR1_Model(PyroRecommender):
         par_real = {}
 
         par_real['softmax_mult'] =  torch.tensor(self.true_softmax_mult).float()
-        par_real['gamma'] = torch.tensor(0.9)
+        par_real['gamma'] = torch.tensor(self.true_gamma)
         par_real['bias_noclick'] = self.true_bias_noclick * torch.ones( (self.maxlen_slate +1,))
 
         groupvec = generate_random_points_on_d_surface(
@@ -594,6 +595,7 @@ class MeanFieldGuide:
                     posterior[node] = pyro.sample(
                         node,
                         dist.Normal(mean[batch['userId']], temp*scale[batch['userId']]).to_event(1))
+
             elif (node == "user-init-plate") | (node == "data"):
                 pass
             else:
