@@ -216,12 +216,13 @@ class RecTrainer(PyroTrainer):
         if self.sim:
             ### SIMULATE REWARDS..:
             rec_types = {
-                'inslate' : self.model.recommend,
-                'thompson' : self.model.recommend_inslate}
+                'thompson' : self.model.recommend,
+                'inslate' : self.model.recommend_inslate
+                }
 
             for rectype, recommend_func in rec_types.items():
                 logging.info(f"compute {rectype} reward..")
-                t_start = 10
+                t_start = self.param.get("t_testsplit")
                 current_data = copy.deepcopy(self.dataloaders['train'].dataset.data)
                 
                 # zero pad the period we want to test:
@@ -238,11 +239,24 @@ class RecTrainer(PyroTrainer):
                     )
 
                 train_mask = current_data['mask_train'][:,t_start:]
-                self.epoch_log[-1][f'train/reward-{rectype}'] = (
-                    all_rewards * train_mask).sum() / train_mask.sum()
 
-                self.epoch_log[-1][f'valid/reward-{rectype}'] = (
-                    all_rewards * (1 - train_mask)).sum() / (1 - train_mask).sum()
+                reward_train_timestep = (all_rewards * train_mask).sum(0) / train_mask.sum(0)
+                reward_test_timestep = (all_rewards * (1 - train_mask)).sum(0) / (1 - train_mask).sum(0)
+                self.epoch_log[-1][f'train/reward-{rectype}'] = reward_train_timestep.mean()
+
+                self.epoch_log[-1][f'valid/reward-{rectype}'] = reward_test_timestep.mean()
+
+                # log per timestep:
+                for i in range(all_rewards.size()[1]):
+                    self.writer.add_scalar(f"reward_time/train-{rectype}", reward_train_timestep[i], global_step=i+t_start)
+                for i in range(all_rewards.size()[1]):
+                    self.writer.add_scalar(f"reward_time/test-{rectype}", reward_test_timestep[i], global_step=i+t_start)
+
+                u = 1
+                anipath = AnimatePath(sim = self.sim, model=self.model, guide = self.guide, num_samples=100)
+                for t in [0, 5, 10, 15, 19]:
+                    anipath.step(t=t, u = u)
+                    self.writer.add_figure(f"visualize-path-{rectype}", plt.gcf(), global_step=t)
 
             ### CALC FOOTRULE DISTANCE BETWEEN REAL AND ESTIMATED RECS:
             # calc for all data at last timestep:
@@ -274,7 +288,7 @@ class RecTrainer(PyroTrainer):
                     c=self.sim.env.user_init[:num_plot_users].cpu(),
                     alpha=0.1)
         self.writer.add_figure('h0', fig, 0)
-        
+
         # %% PLOT OF item vector parameters
         V = pyro.param('item_model.itemvec.weight-mean').detach().cpu()
         fig = plt.figure()
@@ -284,8 +298,51 @@ class RecTrainer(PyroTrainer):
         self.writer.flush() #flush all to disk before we stop
 
 
+#%%
+
+def plotM(M, type = "scatter", **kwargs):
+    if type == "line":
+        p = sns.lineplot
+    else:
+        p = sns.scatterplot
+    return p(M[:,0], M[:,1], **kwargs)
 
 
+class AnimatePath:
+    def __init__(self, sim, model, guide, num_samples=1):
+        self.sim = sim
+        self.num_samples = num_samples
+        self.sim.data['phase_mask'] = torch.ones_like(sim.data['click'])
+        self.pars = []
+        for _ in range(self.num_samples):
+            output = model.likelihood(self.sim.data, par=guide(self.sim.data, temp=1.0))
+            output = {key : val.detach().cpu() for key, val in output.items()}
+            self.pars.append(output)
+
+    def step(self, t, u):
+
+        # for each time step:
+        action = self.sim.data['action'][u,t].cpu()
+        click = self.sim.data['click'][u,t].unsqueeze(0).cpu()
+
+        # Plot all items:
+        p = plotM(self.pars[0]['V'], alpha = 0.1)
+        # Plot all recommended actions:
+        #plotM(self.pars[0]['V'][action], color =['yellow'], alpha = 0.5)
+        #print(action.size())
+        for i in range(self.num_samples):
+            plotM(self.pars[i]['V'][action], color =['yellow'], alpha = 1.0 if i==0 else 0.5)
+
+            plotM(self.pars[i]['V'][click], color = ['red'], alpha=0.9)
+
+            zt = self.pars[i]['zt'][u,t].unsqueeze(0).cpu()
+            plotM(zt, color = ['blue'], alpha=0.5)
+
+        # Plot corresponding click:
+        
+        plt.legend(labels=['all items', 'recommended items', 'click item', 'zt (estimated)'])
+        plt.text(x = 0.8, y=0.8, s = f"t={t}")
+    
 class EarlyStoppingAndCheckpoint:
     def __init__(self, patience=1, save_dir="checkpoints", name = "parameters", **kwargs):
         self.save_dir = save_dir
