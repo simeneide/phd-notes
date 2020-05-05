@@ -56,12 +56,15 @@ def main(**kwargs):
 
             # %% TRAIN: MODEL+CALLBACKS+TRAINER
             pyro.clear_param_store()
-            env = models.AR1_Model(**param, item_group=torch.tensor(itemattr['category']))
+            env = models.AdaptiveLinear_Model(**param, item_group=torch.tensor(itemattr['category']))
             env.init_set_of_real_parameters()
             sim = simulator.Simulator(**param, env=env)
             ind2val, itemattr, dataloaders, sim = simulator.collect_simulated_data(
-                sim, policy_epsilon=0.5, **param)
+                sim, policy_epsilon=param['collect_data_randompct'], **param)
 
+        # Move data to device
+        #for key, val in dataloaders['train'].dataset.data.items():
+        #    dataloaders['train'].dataset.data[key] = val.to(param['device'])
         #%%
         pyro.clear_param_store()
         pyro.validation_enabled(True)
@@ -75,6 +78,8 @@ def main(**kwargs):
             model = models.RNN_Model(**param, item_group=torch.tensor(itemattr['category']).long())
         elif param['model_type'] == "ar1":
             model = models.AR1_Model(**param, item_group=torch.tensor(itemattr['category']).long())
+        elif param['model_type'] == "adalinear":
+            model = models.AdaptiveLinear_Model(**param, item_group=torch.tensor(itemattr['category']).long())
             
         guide = models.MeanFieldGuide(model=model, batch=dummybatch, **param)
 

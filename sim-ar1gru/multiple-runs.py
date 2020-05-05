@@ -6,7 +6,7 @@ import names
 default_param = utils.load_param()
 jobs = []
 for dist in ['l2']:
-    for maxlen_slate in [2, 5, 10,15, 20]:
+    for maxlen_slate in [4]:
 
         optimal_par = {
             'model_type' : 'ar1',
@@ -30,17 +30,19 @@ for dist in ['l2']:
         jobs.append(delayed(run.main)(**random_par))
 
         # %% 
-        for train_seed in range(4):
-            for model_type in ['ar1']: #  #,,, 'rnn'
+        for train_seed in range(1):
+            for model_type in ['ar1', 'adalinear']: #  #,,, 'rnn'
                 for guide_userinit in [True, False]: # , False  False
+                    for guide_maxscale in [0.1, 0.2]:
                         update_pars = {
                             'model_type' : model_type,
                             'guide_userinit' : guide_userinit,
                             'train_seed' : train_seed,
                             'dist' : dist,
                             'maxlen_slate' : maxlen_slate,
+                            'guide_maxscale' : guide_maxscale
                             }
-                        update_pars['name'] = f"{names.get_full_name().replace(' ','-')}_" + ", ".join([f"{key}:{val}" for key, val in update_pars.items()])
+                        update_pars['name'] = f"{names.get_full_name().replace(' ','-')}, COLLECT_RANDOM, " + ", ".join([f"{key}:{val}" for key, val in update_pars.items()])
                         jobs.append(delayed(run.main)(**update_pars))
 
 # %%

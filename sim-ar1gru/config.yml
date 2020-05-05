@@ -1,44 +1,58 @@
 
 # MODEL PARAMETERS
-name: ar1
-train_seed: 0
-real_data: False
-item_dim: 2
-hidden_dim: 2
+name: adalinear-dim10-userinit-reg-noclickNoGeo-h_0.3
+train_seed: 1
+real_data: True
+item_dim: 10
+hidden_dim: 10
 num_users: 500
 maxlen_time: 20
-maxlen_slate: 5
-num_items: 100
-num_groups: 20
+maxlen_slate: 4
+num_items: 500
+num_groups: 50
 true_softmax_mult: 5.0 # multiply all softmax with this
-true_bias_noclick: 2.0
-true_gamma: 0.95
-num_test_users: 100
+true_bias_noclick: 3.0
+true_gamma: 0.90
+num_test_users: 200
 t_testsplit: 5
-device: cpu
-model_type: ar1
+device: cuda
+model_type: adalinear
 dist: "l2"
+collect_data_randompct: 0.7
 
 ### Priors
-prior_scale: 1.0
+prior_scale: 1 # scales the weight of the prior vs likelihood in optimization
+guide_maxscale: 0.01
 prior_softmax_mult_scale: 3.0
-prior_groupvec_scale: 1.0
-prior_groupscale_scale: 1.0
-prior_userinit_scale: 1.0
+prior_groupvec_scale: 0.2
+prior_groupscale_scale: 0.03
+prior_userinit_scale: 0.3
 guide_userinit: True
-guide_maxscale: 10.0
 prior_bias_scale: 5.0
 # AR(1) priors
 prior_gamma_mean: 0.5
-prior_gamma_scale: 5.0
+prior_gamma_scale: 1.0
 #RNN priors
 prior_rnn_scale: 2.0
 
 # TRAINING PARAMETERS
 max_epochs : 5000
 start_true: False
-batch_size: 128
-learning_rate: 0.03
+batch_size: 256
+learning_rate: 0.025
 patience: 100
 calc_footrule: False
 # 
+
+# DATA PREPROC PARAMETERS
+end_date: 2020-05-04
+lookback: 10
+lookforward_test: 0
+data_type: lake-noclickrate-0.2
+data_path: gs://recommendation-exploded/sequences/lake-noclickrate-0.2
+data_dir: data_real
+sample_type: actual
+proxy_rate: 0.0
+maxlen_time: 15
+min_user_clicks: 10
+maxlen_action: 35

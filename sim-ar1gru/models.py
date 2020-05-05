@@ -313,6 +313,170 @@ class AR1_Model(PyroRecommender):
         return self.forward(batch, t=t, mode = "predict")
 
 
+class AdaptiveLinear_Model(PyroRecommender):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+        # Set priors on parameters:
+        self.item_model = ItemHier(**kwargs)
+        self.gamma = PyroSample( dist.Normal(torch.ones((2,))*self.prior_gamma_mean, torch.ones((2,))*self.prior_gamma_scale ) )
+        self.softmax_mult = PyroSample( prior = dist.Normal(torch.tensor(1.0), self.prior_softmax_mult_scale *torch.tensor(1.0)))
+        self.bias_noclick = PyroSample(
+            prior = dist.Normal(
+                torch.zeros((self.maxlen_slate +1,)),
+                self.prior_bias_scale * torch.ones( (self.maxlen_slate +1,))
+            ))
+
+        self.scorefunc = scorefunctions[self.dist]
+
+    def init_set_of_real_parameters(self, seed = 1):
+        torch.manual_seed(seed)
+        par_real = {}
+
+        par_real['softmax_mult'] =  torch.tensor(self.true_softmax_mult).float()
+        par_real['gamma'] = torch.tensor([self.true_gamma, 1.0])
+        par_real['bias_noclick'] = self.true_bias_noclick * torch.ones( (self.maxlen_slate +1,))
+
+        groupvec = generate_random_points_on_d_surface(
+            d=self.item_dim, 
+            num_points=self.num_groups, 
+            radius= 0.5 + 0.5*torch.rand((self.num_groups,1) ),
+            max_angle=3.14)
+            
+        par_real['item_model.groupvec.weight'] = groupvec
+
+        par_real['item_model.groupscale.weight'] = torch.ones_like(groupvec)*0.1
+
+        # Get item vector placement locally inside the group cluster
+        V_loc = generate_random_points_on_d_surface(
+            d=self.item_dim, 
+            num_points=self.num_items,
+            radius=1,
+            max_angle=3.14)
+
+        V = (groupvec[self.item_group] + 0.1 * V_loc)
+
+        # Special items 0 and 1 is in middle:
+        V[:2, :] = 0
+
+        par_real['item_model.itemvec.weight'] = V
+
+
+        # Set user initial conditions to specific groups:
+        self.user_init = torch.randint(self.num_groups, (self.num_users,))
+
+        par_real['h0'] = groupvec[self.user_init]
+
+        self.par_real = par_real
+
+    def get_real_par(self, batch):
+
+        """ Function that outputs a set of real parameters, including setting h0-batch which is batch specific"""
+        out = self.par_real
+        out['h0-batch'] = self.par_real["h0"][batch['userId']]
+        return out
+
+    @pyro_method
+    def forward(self, batch, mode = "likelihood", t=None):
+        with poutine.scale(scale=self.prior_scale): # scale all prior params here
+            click_seq = batch['click']
+            userIds = batch['userId']
+
+            batch_size, t_maxclick = batch['click'].size()
+            # sample item dynamics
+            itemvec = self.item_model()
+            click_vecs = itemvec[click_seq]
+
+            # Sample user dynamic parameters:
+            softmax_mult = self.softmax_mult
+            bias_noclick = self.bias_noclick
+            gamma = self.gamma
+
+            with pyro.plate("user-init-plate", size = self.num_users, subsample = userIds):
+                ## USER PROFILE
+                # container for all hidden states:
+
+                # Sample initial hidden state of users:
+                h0 = pyro.sample("h0-batch", 
+                dist.Normal(
+                    torch.zeros((batch_size, self.hidden_dim)), 
+                    self.prior_userinit_scale*torch.ones((batch_size, self.hidden_dim))
+                    ).to_event(1)
+                    )
+
+            H = torch.zeros( (batch_size, t_maxclick+1, self.hidden_dim))
+
+            H_list = [h0]
+            for t in range(t_maxclick):
+                gamma_batch = gamma[(click_seq[:,t]==1).long()].unsqueeze(1)
+                h_new = gamma_batch * H_list[-1] + (1-gamma_batch)*click_vecs[:,t]
+                H_list.append(h_new)
+
+            H = torch.cat( [h.unsqueeze(1) for h in H_list], dim =1)
+            Z = H # linear from hidden to Z_t
+
+        # NB: DOES NOT WORK FOR LARGE BATCHES:
+        if mode =="predict":
+            
+            zt_last = Z[:, t, ]
+            score = self.scorefunc(zt_last.unsqueeze(1), itemvec.unsqueeze(0))
+            return score, H
+
+        target_idx = batch['click_idx']
+
+
+
+        lengths = (batch['action'] != 0).long().sum(-1)
+        action_vecs = itemvec[batch['action']]
+
+        # Compute scores for all actions by recommender
+        scores = self.scorefunc(Z[:,:t_maxclick].unsqueeze(2), action_vecs)
+
+        scores = scores*softmax_mult
+
+        # Add a constant based on inscreen length to the no click option:
+        batch_bias = bias_noclick[lengths]
+        batch_bias = (batch['action'][:, :, 0] == 1).float() * batch_bias
+        scores[:,:,0] = batch_bias
+        # PAD MASK: mask scores through neg values for padded candidates:
+        scores[batch['action'] == 0] = -100
+        scores = scores.clamp(-100,20)
+
+        # SIMULATE
+        # If we want to simulate, then t_maxclick = t_maxclick+1
+        if mode == "simulate":
+            # Check that there are not click in last time step:
+            if bool((batch['click'][:,-1] != 0 ).any() ):
+                warnings.warn("Trying to sample from model, but there are observed clicks in last timestep.")
+            
+            gen_click_idx = dist.Categorical(logits=scores[:, -1, :]).sample()
+            return gen_click_idx
+        
+        if mode == "likelihood":
+            # MASKING
+            time_mask = (batch['click'] != 0)*(batch['click'] != 2).float()
+            mask = time_mask*batch['phase_mask']
+
+            with pyro.plate("data", size = self.num_users, subsample = userIds):
+                obsdistr = dist.Categorical(logits=scores).mask(mask).to_event(1)
+                pyro.sample("obs", obsdistr, obs=target_idx)
+            
+        return {'score' : scores, 'zt' : Z, 'V' : itemvec}
+
+    #@torch.no_grad()
+    @pyro_method
+    def predict(self, batch, t=-1):
+        """
+        Computes scores for each user in batch at time step t.
+        NB: Not scalable for large batch.
+        
+        batch['click_seq'] : tensor.Long(), size = [batch, timesteps]
+        """
+        return self.forward(batch, t=t, mode = "predict")
+
+
+
+
 class RNN_Model(PyroRecommender):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -563,47 +727,67 @@ class ItemHier(PyroModule):
     def forward(self, idx=None):
         if idx is None:
             idx = torch.arange(self.num_items).to(self.device)
-        return torch.tanh(self.itemvec(idx))
+        return self.itemvec(idx)
 
 
 class MeanFieldGuide:
-    def __init__(self, model, batch, item_dim, num_users, hidden_dim, **kwargs):
+    def __init__(self, model, batch, item_dim, num_users, hidden_dim, num_samples = 50, **kwargs):
         self.item_dim = item_dim
         self.num_users = num_users
         self.hidden_dim = hidden_dim
         self.maxscale = kwargs.get("guide_maxscale", 0.1)
         self.guide_userinit = kwargs.get("guide_userinit", False)
         self.model_trace = poutine.trace(model).get_trace(batch)
-    
-    def __call__(self, batch=None, temp = 1.0):
-        posterior = {}
-        for node, obj in self.model_trace.iter_stochastic_nodes():
-            par = obj['value']
+        self.init_par(num_samples)
 
-            if node == 'h0-batch':
+    def init_par(self, num_samples):
+        self.prior_median = {}
+        for node, site in self.model_trace.iter_stochastic_nodes():
+            try:
+                samples = site['fn'].sample(sample_shape= (num_samples,))
+                self.prior_median[node] = samples.median(dim=0)[0]
+            except:
+                self.prior_median[node] = None
+                logging.info(f"Could not sample init values for {node}")
+
+    def __call__(self, batch=None, temp = 1.0, num_samples=10):
+        posterior = {}
+        for node, site in self.model_trace.iter_stochastic_nodes():
+            par = self.prior_median[node]
+
+            if (node == "user-init-plate") | (node == "data"):
+                pass
+            elif node == 'h0-batch':
                 mean = pyro.param(f"h0-mean",
                                     init_tensor = 0.01*torch.rand((self.num_users, self.hidden_dim)))
                 scale = pyro.param(f"h0-scale",
                                     init_tensor=0.05 +
-                                    0.05 * 0.01*torch.rand((self.num_users, self.hidden_dim)),
+                                    0.01 * 0.01*torch.rand((self.num_users, self.hidden_dim)),
                                     constraint=constraints.interval(0,self.maxscale))
                 if self.guide_userinit is False:
                     mean = torch.zeros_like(mean)
-                    scale = 0.01*torch.ones_like(scale)
+                    scale = 0.001*torch.ones_like(scale)
 
                 with pyro.plate("user-init-plate", size = self.num_users, subsample = batch['userId']):
                     posterior[node] = pyro.sample(
                         node,
                         dist.Normal(mean[batch['userId']], temp*scale[batch['userId']]).to_event(1))
-
-            elif (node == "user-init-plate") | (node == "data"):
-                pass
+            elif node == "gamma":
+                mean = pyro.param(f"{node}-mean",
+                                    init_tensor= par.detach().clone(), constraint = constraints.interval(0,1.0))
+                scale = pyro.param(f"{node}-scale",
+                                    init_tensor=0.01 +
+                                    0.05 * par.detach().clone().abs(),
+                                    constraint=constraints.interval(0,self.maxscale))
+                posterior[node] = pyro.sample(
+                    node,
+                    dist.Normal(mean, temp*scale).independent())
             else:
                 mean = pyro.param(f"{node}-mean",
-                                    init_tensor= 0.01*par.detach().clone())
+                                    init_tensor= par.detach().clone())
                 scale = pyro.param(f"{node}-scale",
-                                    init_tensor=0.05 +
-                                    0.01 * par.detach().clone().abs(),
+                                    init_tensor=0.01 +
+                                    0.05 * par.detach().clone().abs(),
                                     constraint=constraints.interval(0,self.maxscale))
                 posterior[node] = pyro.sample(
                     node,

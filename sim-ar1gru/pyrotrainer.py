@@ -15,6 +15,7 @@ from torch.utils.tensorboard import SummaryWriter
 logging.basicConfig(format='%(asctime)s %(message)s', level='INFO')
 from pyro import poutine
 import copy
+import json
 
 class PyroTrainer:
     def __init__(self,
@@ -81,6 +82,13 @@ class PyroTrainer:
 
         if phase == "train":
             # Report all parameters
+            try:
+                gamma = pyro.param("gamma-mean")
+                if len(gamma)>1:
+                    self.writer.add_scalar(tag="param/gamma_click", scalar_value = gamma[0], global_step=self.step)
+                    self.writer.add_scalar(tag="param/gamma_noClick", scalar_value = gamma[1], global_step=self.step)
+            except:
+                pass
             for name, par in pyro.get_param_store().items():
                 self.writer.add_scalar(tag=f"param/{name}-l1",
                                        scalar_value=par.abs().mean(),
@@ -274,7 +282,8 @@ class RecTrainer(PyroTrainer):
 
 
         ### Add hyperparameters and final metrics to hparam:
-        self.writer.add_hparams(hparam_dict=self.param,
+        serialized_param = json.loads(json.dumps(self.param, default=str))
+        self.writer.add_hparams(hparam_dict=serialized_param,
                                 metric_dict=self.epoch_log[-1])
 
         # Visualize item vectors:
@@ -282,11 +291,18 @@ class RecTrainer(PyroTrainer):
         num_plot_users = 1000
         h0 = pyro.param("h0-mean").detach().cpu()[:num_plot_users]  
         
+        if self.sim:
+            usergroup=self.sim.env.user_init[:num_plot_users].cpu()
+        else:
+            usergroup=None
+
         fig = plt.figure()
         plt.scatter(h0[:, 0],
                     h0[:, 1],
-                    c=self.sim.env.user_init[:num_plot_users].cpu(),
+                    c=usergroup,
                     alpha=0.1)
+
+        self.writer.add_embedding(tag="h0",mat= h0, metadata=usergroup, global_step=0)
         self.writer.add_figure('h0', fig, 0)
 
         # %% PLOT OF item vector parameters
@@ -294,6 +310,7 @@ class RecTrainer(PyroTrainer):
         fig = plt.figure()
         plt.scatter(V[:, 0], V[:, 1], c=self.model.item_model.item_group.cpu())
         self.writer.add_figure('V', fig, 0)
+        self.writer.add_embedding(tag="V",mat= V, metadata=self.model.item_model.item_group.cpu(), global_step=0)
 
         self.writer.flush() #flush all to disk before we stop
 
