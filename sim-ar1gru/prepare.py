@@ -190,6 +190,11 @@ def build_global_ind2val(sqlContext, sequences, data_dir, drop_groups=False, min
             vec[idx] = int(val2ind.get(item))
         itemattr[var] = vec
 
+    # displayType
+    display_types = sequences.select(F.explode("displayType")).distinct().toPandas().values.flatten()
+    ind2val['displayType'] = {i+1 : val for i, val in enumerate(display_types)}
+    ind2val['displayType'][0] = "<UNK>"
+
     ## SAVE
     # Ind2val
     with open(f'{data_dir}/ind2val.pickle', 'wb') as handle:
@@ -210,6 +215,8 @@ def prepare_sequences(sqlContext,
                       data_path,
                       data_dir,
                       data_type,
+                      maxlen_time,
+                      maxlen_action,
                       limit=False):
     ''' 
     If ind2val is supplied, this will be used instead of creating its own
@@ -236,6 +243,18 @@ def prepare_sequences(sqlContext,
 
     indexize_item_array = F.udf(indexize_item_array, ArrayType(IntegerType()))
 
+    # Indexize displayType for all dataset:
+    displaytype2ind = {val: ind for ind, val in ind2val['displayType'].items()}
+    def indexize_displaytype_array(L):
+        if L is None:
+            return None
+        if len(L) >= 0:
+            return [int(displaytype2ind.get(l, 0)) for l in L]
+        else:
+            return None
+
+    indexize_displaytype_array = F.udf(indexize_displaytype_array, ArrayType(IntegerType()))
+
     #%% Indexize actions
     def indexize_item_array_of_array_loc(L):
         newL = []
@@ -252,11 +271,19 @@ def prepare_sequences(sqlContext,
     # Test sequence:
     #L = [['149406082', '154407944', '145074295', '154317246'], ['149406082', '154407944', '145074295', '154317246']]
     #indexize_item_array_of_array_loc(L)
+    
+    ##% INDEXIZE userId
+    userId2ind = {val: ind for ind, val in ind2val['userId'].items()}
+    indexize_userId = F.udf(lambda x: userId2ind.get(x,0), IntegerType())
 
     #%% Combine today training data with historical and future click data:
-    fulldat = (sequences.withColumn(
-        'click', indexize_item_array('click')).withColumn(
-            'action', indexize_item_array_of_array('action')))
+    fulldat = (
+        sequences
+        .withColumn("userId", indexize_userId("userId"))
+        .withColumn('click', indexize_item_array('click'))
+        .withColumn('action', indexize_item_array_of_array('action'))
+        .withColumn("displayType", indexize_displaytype_array("displayType"))
+        )
 
     logging.info('Collect slates to sequences across days..')
     w = Window.partitionBy('userId').orderBy('date')
@@ -272,19 +299,14 @@ def prepare_sequences(sqlContext,
     flat_list = lambda l: [item for sublist in l for item in sublist]
     flattenfunc = lambda col, ouput_type: F.udf((flat_list), ouput_type)(col)
 
-    flattened = (sequence_slates.withColumn(
-        'click', flattenfunc('click', ArrayType(IntegerType()))).withColumn(
-            'click_idx',
-            flattenfunc('click_idx', ArrayType(IntegerType()))).withColumn(
-                'action',
-                flattenfunc('action', ArrayType(ArrayType(
-                    IntegerType())))).withColumn(
-                        'displayType',
-                        flattenfunc('displayType',
-                                    ArrayType(StringType()))).withColumn(
-                                        'timestamp',
-                                        flattenfunc('timestamp',
-                                                    ArrayType(StringType()))))
+    flattened = (
+        sequence_slates.withColumn('click', flattenfunc('click', ArrayType(IntegerType())))
+        .withColumn('click_idx', flattenfunc('click_idx', ArrayType(IntegerType())))
+        .withColumn('action',flattenfunc('action', ArrayType(ArrayType(IntegerType()))))
+        .withColumn('displayType',flattenfunc('displayType',ArrayType(IntegerType())))
+        .withColumn('timestamp',flattenfunc('timestamp',ArrayType(StringType())))
+        )
+
     ## -- COLLECT AND SAVE
     logging.info('starting collect spark2pandas..')
     dat = DATAHelper.toPandas(flattened)
@@ -292,6 +314,8 @@ def prepare_sequences(sqlContext,
     logging.info(
         f'Dataset for [{start_date},{end_date}] has {dat.shape[0]} sequences and {len(ind2val["itemId"])} unique items.'
     )
+    logging.info("processing data to tensors..:")
+    data = construct_data_torch_tensors(dat, maxlen_time=maxlen_time, maxlen_action=maxlen_action)
     logging.info('Save data to files..')
     if not limit:
         save_dir = f'{data_dir}/{data_type}'
@@ -300,43 +324,39 @@ def prepare_sequences(sqlContext,
         logging.info('starting saving..')
 
         # All data
-        dat.to_pickle(f'{save_dir}/dat.pickle')
-        logging.info('saved dat.')
+        torch.save(data, f'{save_dir}/data.pt')
+        logging.info('saved data.')
     else:
         logging.info('Limit was set, skip saving..')
     logging.info(f'Done saving for [{start_date},{end_date}].')
     return True
 
 
-#%% DATALOADERS
-class SequentialDataset(Dataset):
-    '''
-     Note: displayType has been uncommented for future easy implementation.
-    '''
-    def __init__(self, dat, maxlen_time, maxlen_action, num_items):
+# %%
+def construct_data_torch_tensors(dat, maxlen_time, maxlen_action):
         logging.info(
             f'Building dataset of {dat.shape[0]} sequences. (timelength, candlength) = ({maxlen_time}, {maxlen_action})'
         )
-        self.dat = dat
-        self.num_items = num_items
-        self.candidate = 'actual'
+        dat = dat.reset_index(drop=True)
 
-        self.action = torch.zeros(
+        action = torch.zeros(
             (len(dat), maxlen_time,
              maxlen_action)).long()  # data_sequence, time_seq, candidates
-        self.click = torch.zeros(len(dat),
-                                 maxlen_time).long()  # data_sequence, time_seq
-        #self.displayType = torch.zeros(len(dat), maxlen_time).long()  # data_sequence, time_seq
-        self.click_idx = torch.zeros(
+        click =       torch.zeros(len(dat), maxlen_time).long()  # data_sequence, time_seq
+        displayType = torch.zeros(len(dat), maxlen_time).long()  # data_sequence, time_seq
+
+        click_idx = torch.zeros(
             len(dat), maxlen_time).long()  # data_sequence, time_seq
-        self.lengths = torch.zeros((len(dat), maxlen_time)).long()
+        lengths = torch.zeros((len(dat), maxlen_time)).long()
+
+        userId = torch.tensor(dat.userId.values)
 
         for i in dat.index:
             # action
             row_action = dat.at[i, 'action'][:maxlen_time]
             obs_time_len = min(maxlen_time, len(row_action))
 
-            self.lengths[i, :obs_time_len] = torch.tensor(
+            lengths[i, :obs_time_len] = torch.tensor(
                 [len(l) for l in row_action])
 
             row_action_pad = torch.from_numpy(
@@ -344,67 +364,62 @@ class SequentialDataset(Dataset):
                               maxlen=maxlen_action,
                               padding='post',
                               truncating='post'))
-            self.action[i, :obs_time_len] = row_action_pad
+            action[i, :obs_time_len] = row_action_pad
 
             # Click
-            self.click[i, :obs_time_len] = torch.tensor(
+            click[i, :obs_time_len] = torch.tensor(
                 dat.at[i, 'click'])[:obs_time_len]
 
             # Click index
-            self.click_idx[i, :obs_time_len] = torch.tensor(
+            click_idx[i, :obs_time_len] = torch.tensor(
                 dat.at[i, 'click_idx'])[:obs_time_len]
 
-            #self.displayType[i,:obs_time_len] = torch.tensor(row.displayType)[:obs_time_len]
+            displayType[i,:obs_time_len] = torch.tensor(dat.at[i, 'displayType'])[:obs_time_len]
 
         ## Set those clicks that were above the maximum candidate set to PAD:
         logging.info(
-            f'There are {(self.click_idx >= maxlen_action).float().sum()} clicks that are above the maxlength action. Setting to click_idx=0 but with click= 0 ("PAD")..'
+            f'There are {(click_idx >= maxlen_action).float().sum()} clicks that are above the maxlength action. Setting to click_idx=0 but with click= 0 ("PAD")..'
         )
-        self.click_idx[(self.click_idx >= maxlen_action)] = 0
-        self.click[(self.click_idx >= maxlen_action)] = 0
+        click_idx[(click_idx >= maxlen_action)] = 0
+        click[(click_idx >= maxlen_action)] = 0
 
-        self.data = {
-            'lengths': self.lengths,
-            #'displayType' : self.displayType,
-            'action': self.action,
-            'click': self.click,
-            'click_idx': self.click_idx
+        data = {
+            'userId' : userId,
+            'lengths': lengths,
+            'displayType' : displayType,
+            'action': action,
+            'click': click,
+            'click_idx': click_idx
         }
+        return data
+
+#%% DATALOADERS
+class SequentialDataset(Dataset):
+    '''
+     Note: displayType has been uncommented for future easy implementation.
+    '''
+    def __init__(self, data):
+
+        self.data = data
 
     def __getitem__(self, idx):
         batch = {key: val[idx] for key, val in self.data.items()}
-
-        if self.candidate == 'random':  # sample actions instead of using truth
-            newaction = torch.randint_like(batch['action'],
-                                           high=self.num_items)
-            newaction = newaction * (batch['action'] != 0).long()
-            newaction[
-                batch['click'] != 1,
-                1] = 1  # include noClick option on position 1 if not chosen by user (then it is in pos 0)
-            newaction[:, 0] = batch['click']
-
-            batch['proxy_action'] = newaction
-            batch['proxy_click_idx'] = torch.zeros_like(batch['click_idx'])
         return batch
 
     def __len__(self):
-        return len(self.dat)
+        return len(self.data['click'])
 
 
-def prepare_dataset(data_dir, data_type, maxlen_time, maxlen_action):
+def prepare_dataset(data_dir, data_type):
     logging.info(f'Building dataset for {data_dir} {data_type}.')
     logging.info('Load ind2val..')
     with open(f'{data_dir}/ind2val.pickle', 'rb') as handle:
         ind2val = pickle.load(handle)
-    logging.info('Load dat..')
-    with open(f'{data_dir}/{data_type}/dat.pickle', 'rb') as handle:
-        dat = pickle.load(handle).reset_index(drop=True)
 
-    num_items = len(ind2val['itemId'])
-    dataset = SequentialDataset(dat,
-                                maxlen_time=maxlen_time,
-                                maxlen_action=maxlen_action,
-                                num_items=num_items)
+    logging.info('Load data..')
+    data = torch.load(f'{data_dir}/{data_type}/data.pt')
+
+    dataset = SequentialDataset(data)
 
     with open(f'{data_dir}/{data_type}/dataset.pickle', 'wb') as handle:
         pickle.dump(dataset, handle, protocol=4)
@@ -418,17 +433,13 @@ def load_dataloaders(data_dir,
                      num_workers=0,
                      override_candidate_sampler=None,
                      t_testsplit = 5):
-    dataset_path = f'{data_dir}/{data_type}/dataset.pickle'
-    logging.info(f'Loading dataset {dataset_path}')
+
+    logging.info('Load data..')
+    data = torch.load(f'{data_dir}/{data_type}/data.pt')
+    dataset = SequentialDataset(data)
+    
     with open(f'{data_dir}/ind2val.pickle', 'rb') as handle:
         ind2val = pickle.load(handle)
-
-    with open(dataset_path, 'rb') as handle:
-        dataset = pickle.load(handle)
-
-    if override_candidate_sampler is not None:
-        logging.info(f'action sampling strategy. now: {override_candidate_sampler}')
-        dataset.candidate = override_candidate_sampler
 
     num_testusers = int(len(dataset) * split_trainvalid)
     torch.manual_seed(0)
@@ -518,125 +529,6 @@ def get_w2v_item(data_dir, end_date=None):
         pickle.dump(new_itemvec, handle)
     return new_itemvec
 
-
-def prepare_init_parameters(param, device='cpu'):
-    ''' 
-    Loads pytorch parameters from last saved models.
-    fits the items it into the current ind2val format.
-    User model stays same as old model.
-    '''
-    model_name = param.get('name')
-
-    #%% INITIALIZE NEW PARAMETERS (noninformative so far)
-    item_dim = param.get('item_dim')
-    data_dir = param.get('data_dir')
-    # LOAD GLOBAL IND2VAL
-    with open(f'{data_dir}/ind2val.pickle', 'rb') as handle:
-        ind2val = pickle.load(handle)
-
-    with open(f'{data_dir}/itemattr.pickle', 'rb') as handle:
-        itemattr = pickle.load(handle)
-    #%%
-    new_par = {
-        'user_model': None,
-        'item_model': {
-            'itemvec.weight': {
-                'mean':
-                torch.zeros((len(ind2val['itemId']), item_dim)).to(device),
-                'scale':
-                param.getfloat('init_itemscale') * torch.ones(
-                    (len(ind2val['itemId']), item_dim)).to(device)
-            },
-            'groupvec': {
-                'mean':
-                param.getfloat('init_itemscale') * (torch.rand(
-                    (len(ind2val['category']), item_dim)) - 0.5).to(device),
-                'scale':
-                param.getfloat('init_itemscale') * torch.ones(
-                    (len(ind2val['category']), item_dim)).to(device)
-            },
-            'groupscale': {
-                'mean':
-                param.getfloat('init_itemscale') * torch.ones(
-                    (len(ind2val['category']), item_dim)).to(device),
-                'scale':
-                0.0001 * torch.ones(
-                    (len(ind2val['category']), item_dim)).to(device)
-            }
-        }
-    }
-
-    # Two options:
-    # - we can use w2v parameters as init. then no old model is loaded
-    # - we try to use old_model as init. more handling after (in nested if)
-
-    if param.get('init_par') == 'w2v':
-        logging.info(f'Setting w2v inits on itemvec.weight-mean.')
-        itemvec_w2v = get_w2v_item(data_dir=param.get('data_dir'),
-                                   end_date=param.get('end_date'))
-        new_par['item_model']['itemvec.weight']['mean'] = itemvec_w2v.to(
-            device)
-    elif param.get('init_par') == 'old_model':
-        old_ind2val, old_itemattr, old_par = load_torch_parameters(
-            model_name=model_name, device=device)
-        # Three three possibilities:
-        # - No prev parameters found, using w2v on item vecs
-        # - No prev parameters found, using noninformative on item vecs
-        # - Prev parameters found, using those, noninform on the rest.
-        if (old_par is None) & (param.get('init_fallback') == 'w2v'):
-            Warning(
-                f'No previous parameters found for "{model_name}". Setting w2v inits on itemvec.weight-mean.'
-            )
-            itemvec_w2v = get_w2v_item(data_dir=param.get('data_dir'),
-                                       end_date=param.get('end_date'))
-            new_par['item_model']['itemvec.weight']['mean'] = itemvec_w2v.to(
-                device)
-        elif (old_par is None) & (param.get('init_fallback') != 'w2v'):
-            Warning(
-                f'No previous parameters found for "{model_name}". SETTING NON-INFORMATIVE INITS!'
-            )
-        else:
-            logging.info(
-                f'Filling init with values from previous version of model {model_name}.'
-            )
-            # INITIALIZE WITH FILLED VALUES:
-            # no reparameterization on user side, just copy:
-            new_par['user_model'] = old_par['user_model']
-
-            #%% BUILD ITEM PARAMETERS
-            # There are three sets of parameters on item side:
-            # the itemvec, the groupvec and the groupscale. loop through..:
-            varpar = [('itemId', 'itemvec.weight'), ('category', 'groupvec'),
-                      ('category', 'groupscale')]
-
-            for l in varpar:
-                variable, parameter = l
-                print(
-                    f'Filling old params in {parameter} for variable {variable}..'
-                )
-                exist_before = 0
-                old_item2ind = {
-                    val: key
-                    for key, val in old_ind2val[variable].items()
-                }
-                for idx, finncode in ind2val[variable].items():
-                    old_idx = old_item2ind.get(finncode)
-
-                    if old_idx:
-                        for key in ['mean', 'scale']:
-                            new_par['item_model'][parameter][key][
-                                idx, ] = old_par['item_model'][parameter][key][
-                                    old_idx, ]
-                        exist_before += 1
-                logging.info(
-                    f'Rate of old items in new ind2item: {exist_before/len(ind2val[variable]):.3f} '
-                )
-            #%%
-
-    torch.save(new_par, f='old_params.torch')
-    return new_par
-
-
 #%%
 
 if __name__ == '__main__':
@@ -677,23 +569,35 @@ if __name__ == '__main__':
         .filter(F.col('date') >= start_date)  # remove old data
     )
 
-    ## Prepare Users
-    users = (sequences.withColumn(
-        'clicks_on_day', F.size('click')).groupby('userId').agg(
-            F.count('*').alias('unique_days'),
-            F.sum('clicks_on_day').alias('tot_clicks')).filter(
-                F.col('tot_clicks') >= param.get('min_user_clicks')).select(
-                    'userId'))
-
-    logging.info(f'There are {users.count()} users in the dataset.')
-
     ## Prepare item indicies
     logging.info('Prepare ind2item and item attributes..')
     ind2val, itemattr = build_global_ind2val(sqlContext,
                                              sequences=sequences,
                                              data_dir=param.get('data_dir'),
                                              drop_groups=param.get(
-                                                 'drop_category', False))
+                                                 'drop_category', False),
+                                                 min_item_views = param.get("min_item_views", 100))
+
+
+    ## Prepare Users
+    users = (
+        sequences
+        .withColumn('clicks_on_day', F.size('click'))
+        .groupby('userId')
+        .agg(
+            F.count('*').alias('unique_days'),
+            F.sum('clicks_on_day').alias('tot_clicks')
+            )
+        .filter(F.col('tot_clicks') >= param.get('min_user_clicks'))
+        .select('userId')
+        )
+
+    # userID
+    unique_users = users.toPandas().values.flatten()
+    ind2val['userId'] = {i+1 : val for i, val in enumerate(unique_users)}
+    ind2val['userId'][0] = "<UNK>"
+    #logging.info(f'There are {len(ind2val["userId"])} users in the dataset.')
+
 
     logging.info('Starting on the sequences..')
     sequences = (sequences.join(users, on='userId', how='inner'))
@@ -707,11 +611,14 @@ if __name__ == '__main__':
                       ind2val=ind2val,
                       data_path=data_path,
                       data_dir=param.get('data_dir'),
-                      data_type=data_type)
+                      data_type=data_type,
+                      maxlen_time=param.get('maxlen_time'),
+                      maxlen_action=param.get('maxlen_action')
+    )
 
-    logging.info('-- Prepare pytorch dataset..')
-    prepare_dataset(data_dir=param.get('data_dir'),
-                    data_type=data_type,
-                    maxlen_time=param.get('maxlen_time'),
-                    maxlen_action=param.get('maxlen_action'))
+    #logging.info('-- Prepare pytorch dataset..')
+    #prepare_dataset(data_dir=param.get('data_dir'),
+    #                data_type=data_type
+    #                )
+
     logging.info('Done prepare.py')
