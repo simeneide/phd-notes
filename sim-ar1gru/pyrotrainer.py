@@ -27,6 +27,7 @@ class PyroTrainer:
                  param=None,
                  report_param_histogram=False,
                  calc_footrule=True,
+                 ind2val=None,
                  **kwargs):
         self.model = model
         self.guide = guide
@@ -41,6 +42,7 @@ class PyroTrainer:
         self.earlystop = EarlyStoppingAndCheckpoint(**kwargs)
         self.writer = SummaryWriter(
             f'tensorboard/{kwargs.get("name", f"lr-{self.learning_rate}/")}')
+        self.ind2val = ind2val
 
     def init_opt(self, lr=1e-2):
         logging.info(f"Initializing default Adam optimizer with lr{lr}")
@@ -85,8 +87,8 @@ class PyroTrainer:
             try:
                 gamma = pyro.param("gamma-mean")
                 if len(gamma)>1:
-                    self.writer.add_scalar(tag="param/gamma_click", scalar_value = gamma[0], global_step=self.step)
-                    self.writer.add_scalar(tag="param/gamma_noClick", scalar_value = gamma[1], global_step=self.step)
+                    for i in range(len(gamma)):
+                        self.writer.add_scalar(tag=f"param/gamma_{self.ind2val['displayType'][i]}", scalar_value = gamma[i], global_step=self.step)
             except:
                 pass
             for name, par in pyro.get_param_store().items():
@@ -97,6 +99,26 @@ class PyroTrainer:
                     self.writer.add_histogram(tag=f"param/{name}",
                                               values=par,
                                               global_step=self.step)
+
+        if (phase == "train") & (ep % 5 == 0):
+            #try:
+                import FINNPlot
+                idx = 10
+                num_recs=5
+                num_time=10
+                smallbatch = {key: val[idx].unsqueeze(0).to(self.device).long() for key, val in self.dataloaders['train'].dataset.data.items()}
+                M = torch.zeros(num_recs+1, num_time)
+                M[0,:] = smallbatch['click'].flatten()[:num_time] # add view to first row
+                for t_rec in range(num_time):
+                    M[1:, t_rec] = self.model.recommend(smallbatch, par=self.guide, num_rec=num_recs, t_rec=t_rec)
+
+                nrow = M.size()[1]
+                finnkoder = [self.ind2val['itemId'][r.item()] for r in M.flatten()]
+                img_tensor=FINNPlot.add_image_line(finnkoder, nrow=nrow )
+
+                self.writer.add_image("recs",img_tensor=img_tensor, global_step=self.step)
+            #except:
+            #    pass
 
     def end_of_training(self, *args, **kwargs):
         pass
@@ -116,7 +138,7 @@ class PyroTrainer:
                 for batch in dl:
                     if phase == "train":
                         tmp_log = self.training_step(batch)
-                        self.step += batch_size
+                        self.step += batch_sized
                     else:
                         tmp_log = self.validation_step(batch)
                     # Add tmp log to log list for phase

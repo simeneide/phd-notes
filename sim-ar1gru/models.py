@@ -71,7 +71,7 @@ class PyroRecommender(PyroModule):
             data=par)(batch)
 
     @pyro_method
-    def recommend(self, batch, num_rec=1, chunksize=3, t=-1, par=None, **kwargs):
+    def recommend(self, batch, num_rec=1, chunksize=3, t_rec=-1, par=None, **kwargs):
         """
         Compute predict & rank on a batch in chunks (for memory)
         Par can either be the string "real" or a function that outputs the parameters when called with a batch of data.
@@ -81,11 +81,12 @@ class PyroRecommender(PyroModule):
         topk = torch.zeros((len(click_seq), num_rec), device=self.device)
 
         i = 0
-        for click_chunk, userId in zip(
+        for click_chunk, displayType, userId in zip(
             chunker(click_seq, chunksize),
+            chunker(batch['displayType'], chunksize),
             chunker(batch['userId'], chunksize)):
             pred, ht = self.predict_cond(
-                batch={'click' : click_chunk, 'userId' : userId}, t=t, par=par)
+                batch={'click' : click_chunk, 'userId' : userId, 'displayType' : displayType}, t_rec=t_rec, par=par)
             topk_chunk = 3 + pred[:, 3:].argsort(dim=1,
                                                  descending=True)[:, :num_rec]
             topk[i:(i + len(pred))] = topk_chunk
@@ -93,7 +94,7 @@ class PyroRecommender(PyroModule):
         return topk
 
     @pyro_method
-    def recommend_inslate(self, batch, num_rec=1, chunksize=3, t=-1, par=None, **kwargs):
+    def recommend_inslate(self, batch, num_rec=1, chunksize=3, t_rec=-1, par=None, **kwargs):
         """
         Inslate thompson recommendation.
         Compute predict & rank on a batch in chunks (for memory)
@@ -112,7 +113,7 @@ class PyroRecommender(PyroModule):
             topk_samples = torch.zeros((chunklen,num_rec,num_rec))
             for s in range(num_rec):
                 pred, ht = self.predict_cond(
-                    batch={'click' : click_chunk, 'userId' : userId}, t=t, par=par)
+                    batch={'click' : click_chunk, 'userId' : userId}, t_rec=t_rec, par=par)
                 topk_samples[:,:,s] = 3 + pred[:, 3:].argsort(dim=1,
                                                         descending=True)[:, :num_rec]
 
@@ -215,7 +216,7 @@ class AR1_Model(PyroRecommender):
         return out
 
     @pyro_method
-    def forward(self, batch, mode = "likelihood", t=None):
+    def forward(self, batch, mode = "likelihood", t_rec=None):
         with poutine.scale(scale=self.prior_scale): # scale all prior params here
             click_seq = batch['click']
             userIds = batch['userId']
@@ -256,7 +257,7 @@ class AR1_Model(PyroRecommender):
         # NB: DOES NOT WORK FOR LARGE BATCHES:
         if mode =="predict":
             
-            zt_last = Z[:, t, ]
+            zt_last = Z[:, t_rect, ]
             score = self.scorefunc(zt_last.unsqueeze(1), itemvec.unsqueeze(0))
             return score, H
 
@@ -303,14 +304,14 @@ class AR1_Model(PyroRecommender):
 
     #@torch.no_grad()
     @pyro_method
-    def predict(self, batch, t=-1):
+    def predict(self, batch, t_rec=-1):
         """
         Computes scores for each user in batch at time step t.
         NB: Not scalable for large batch.
         
         batch['click_seq'] : tensor.Long(), size = [batch, timesteps]
         """
-        return self.forward(batch, t=t, mode = "predict")
+        return self.forward(batch, t_rec=t_rec, mode = "predict")
 
 
 class AdaptiveLinear_Model(PyroRecommender):
@@ -319,7 +320,7 @@ class AdaptiveLinear_Model(PyroRecommender):
 
         # Set priors on parameters:
         self.item_model = ItemHier(**kwargs)
-        self.gamma = PyroSample( dist.Normal(torch.ones((2,))*self.prior_gamma_mean, torch.ones((2,))*self.prior_gamma_scale ) )
+        self.gamma = PyroSample( dist.Normal(torch.ones((self.num_displayTypes,))*self.prior_gamma_mean, torch.ones((self.num_displayTypes,))*self.prior_gamma_scale ) )
         self.softmax_mult = PyroSample( prior = dist.Normal(torch.tensor(1.0), self.prior_softmax_mult_scale *torch.tensor(1.0)))
         self.bias_noclick = PyroSample(
             prior = dist.Normal(
@@ -377,10 +378,14 @@ class AdaptiveLinear_Model(PyroRecommender):
         return out
 
     @pyro_method
-    def forward(self, batch, mode = "likelihood", t=None):
+    def forward(self, batch, mode = "likelihood", t_rec=None):
         with poutine.scale(scale=self.prior_scale): # scale all prior params here
             click_seq = batch['click']
             userIds = batch['userId']
+            
+            # Build gamma index: (one each for search, rec and noclick):
+            gamma_idx = batch['displayType']
+            #gamma_idx[(click_seq==1)] = 0 # set noclicks to zero gamma idx
 
             batch_size, t_maxclick = batch['click'].size()
             # sample item dynamics
@@ -392,23 +397,22 @@ class AdaptiveLinear_Model(PyroRecommender):
             bias_noclick = self.bias_noclick
             gamma = self.gamma
 
-            with pyro.plate("user-init-plate", size = self.num_users, subsample = userIds):
-                ## USER PROFILE
-                # container for all hidden states:
-
-                # Sample initial hidden state of users:
-                h0 = pyro.sample("h0-batch", 
-                dist.Normal(
-                    torch.zeros((batch_size, self.hidden_dim)), 
-                    self.prior_userinit_scale*torch.ones((batch_size, self.hidden_dim))
-                    ).to_event(1)
-                    )
-
-            H = torch.zeros( (batch_size, t_maxclick+1, self.hidden_dim))
+            if self.guide_userinit:
+                with pyro.plate("user-init-plate", size = self.num_users, subsample = userIds):
+                    # Sample initial hidden state of users:
+                    h0 = pyro.sample("h0-batch", 
+                    dist.Normal(
+                        torch.zeros((batch_size, self.hidden_dim)), 
+                        self.prior_userinit_scale*torch.ones((batch_size, self.hidden_dim))
+                        ).to_event(1)
+                        )
+            else:
+                h0 = torch.zeros((batch_size, self.hidden_dim)) #torch.zeros( (batch_size, t_maxclick+1, self.hidden_dim))
 
             H_list = [h0]
             for t in range(t_maxclick):
-                gamma_batch = gamma[(click_seq[:,t]==1).long()].unsqueeze(1)
+                gamma_batch = gamma[gamma_idx[:,t]].unsqueeze(1)
+                gamma_batch[(click_seq[:,t]==1)] = 1.0
                 h_new = gamma_batch * H_list[-1] + (1-gamma_batch)*click_vecs[:,t]
                 H_list.append(h_new)
 
@@ -418,7 +422,7 @@ class AdaptiveLinear_Model(PyroRecommender):
         # NB: DOES NOT WORK FOR LARGE BATCHES:
         if mode =="predict":
             
-            zt_last = Z[:, t, ]
+            zt_last = Z[:, t_rec, ]
             score = self.scorefunc(zt_last.unsqueeze(1), itemvec.unsqueeze(0))
             return score, H
 
@@ -465,14 +469,176 @@ class AdaptiveLinear_Model(PyroRecommender):
 
     #@torch.no_grad()
     @pyro_method
-    def predict(self, batch, t=-1):
+    def predict(self, batch, t_rec=-1):
         """
         Computes scores for each user in batch at time step t.
         NB: Not scalable for large batch.
         
         batch['click_seq'] : tensor.Long(), size = [batch, timesteps]
         """
-        return self.forward(batch, t=t, mode = "predict")
+        return self.forward(batch, t_rec=t_rec, mode = "predict")
+
+
+
+class Markov_Model(PyroRecommender):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+        # Set priors on parameters:
+        self.item_model = ItemHier(**kwargs)
+        self.softmax_mult = PyroSample( prior = dist.Normal(torch.tensor(1.0), self.prior_softmax_mult_scale *torch.tensor(1.0)))
+        self.bias_noclick = PyroSample(
+            prior = dist.Normal(
+                torch.zeros((self.maxlen_slate +1,)),
+                self.prior_bias_scale * torch.ones( (self.maxlen_slate +1,))
+            ))
+
+        self.scorefunc = scorefunctions[self.dist]
+
+    def init_set_of_real_parameters(self, seed = 1):
+        torch.manual_seed(seed)
+        par_real = {}
+
+        par_real['softmax_mult'] =  torch.tensor(self.true_softmax_mult).float()
+        par_real['gamma'] = torch.tensor([self.true_gamma, 1.0])
+        par_real['bias_noclick'] = self.true_bias_noclick * torch.ones( (self.maxlen_slate +1,))
+
+        groupvec = generate_random_points_on_d_surface(
+            d=self.item_dim, 
+            num_points=self.num_groups, 
+            radius= 0.5 + 0.5*torch.rand((self.num_groups,1) ),
+            max_angle=3.14)
+            
+        par_real['item_model.groupvec.weight'] = groupvec
+
+        par_real['item_model.groupscale.weight'] = torch.ones_like(groupvec)*0.1
+
+        # Get item vector placement locally inside the group cluster
+        V_loc = generate_random_points_on_d_surface(
+            d=self.item_dim, 
+            num_points=self.num_items,
+            radius=1,
+            max_angle=3.14)
+
+        V = (groupvec[self.item_group] + 0.1 * V_loc)
+
+        # Special items 0 and 1 is in middle:
+        V[:2, :] = 0
+
+        par_real['item_model.itemvec.weight'] = V
+
+
+        # Set user initial conditions to specific groups:
+        self.user_init = torch.randint(self.num_groups, (self.num_users,))
+
+        par_real['h0'] = groupvec[self.user_init]
+
+        self.par_real = par_real
+
+    def get_real_par(self, batch):
+
+        """ Function that outputs a set of real parameters, including setting h0-batch which is batch specific"""
+        out = self.par_real
+        out['h0-batch'] = self.par_real["h0"][batch['userId']]
+        return out
+
+    @pyro_method
+    def forward(self, batch, mode = "likelihood", t_rec=None):
+        with poutine.scale(scale=self.prior_scale): # scale all prior params here
+            click_seq = batch['click']
+            userIds = batch['userId']
+
+            batch_size, t_maxclick = batch['click'].size()
+            # sample item dynamics
+            itemvec = self.item_model()
+            click_vecs = itemvec[click_seq]
+
+            # Sample user dynamic parameters:
+            softmax_mult = self.softmax_mult
+            bias_noclick = self.bias_noclick
+
+            if self.guide_userinit:
+                with pyro.plate("user-init-plate", size = self.num_users, subsample = userIds):
+                    # Sample initial hidden state of users:
+                    h0 = pyro.sample("h0-batch", 
+                    dist.Normal(
+                        torch.zeros((batch_size, self.hidden_dim)), 
+                        self.prior_userinit_scale*torch.ones((batch_size, self.hidden_dim))
+                        ).to_event(1)
+                        )
+            else:
+                h0 = torch.zeros((batch_size, self.hidden_dim)) #torch.zeros( (batch_size, t_maxclick+1, self.hidden_dim))
+
+            H_list = [h0]
+            for t in range(t_maxclick):
+                gamma_batch = torch.zeros_like(click_seq[:,t]).unsqueeze(-1)
+                gamma_batch[(click_seq[:,t]==1)] = 1.0
+                
+                h_new = gamma_batch * H_list[-1] + (1-gamma_batch)*click_vecs[:,t]
+                H_list.append(h_new)
+
+            H = torch.cat( [h.unsqueeze(1) for h in H_list], dim =1)
+            Z = H # linear from hidden to Z_t
+
+        # NB: DOES NOT WORK FOR LARGE BATCHES:
+        if mode =="predict":
+            
+            zt_last = Z[:, t_rec, ]
+            score = self.scorefunc(zt_last.unsqueeze(1), itemvec.unsqueeze(0))
+            return score, H
+
+        target_idx = batch['click_idx']
+
+
+
+        lengths = (batch['action'] != 0).long().sum(-1)
+        action_vecs = itemvec[batch['action']]
+
+        # Compute scores for all actions by recommender
+        scores = self.scorefunc(Z[:,:t_maxclick].unsqueeze(2), action_vecs)
+
+        scores = scores*softmax_mult
+
+        # Add a constant based on inscreen length to the no click option:
+        batch_bias = bias_noclick[lengths]
+        batch_bias = (batch['action'][:, :, 0] == 1).float() * batch_bias
+        scores[:,:,0] = batch_bias
+        # PAD MASK: mask scores through neg values for padded candidates:
+        scores[batch['action'] == 0] = -100
+        scores = scores.clamp(-100,20)
+
+        # SIMULATE
+        # If we want to simulate, then t_maxclick = t_maxclick+1
+        if mode == "simulate":
+            # Check that there are not click in last time step:
+            if bool((batch['click'][:,-1] != 0 ).any() ):
+                warnings.warn("Trying to sample from model, but there are observed clicks in last timestep.")
+            
+            gen_click_idx = dist.Categorical(logits=scores[:, -1, :]).sample()
+            return gen_click_idx
+        
+        if mode == "likelihood":
+            # MASKING
+            time_mask = (batch['click'] != 0)*(batch['click'] != 2).float()
+            mask = time_mask*batch['phase_mask']
+
+            with pyro.plate("data", size = self.num_users, subsample = userIds):
+                obsdistr = dist.Categorical(logits=scores).mask(mask).to_event(1)
+                pyro.sample("obs", obsdistr, obs=target_idx)
+            
+        return {'score' : scores, 'zt' : Z, 'V' : itemvec}
+
+    #@torch.no_grad()
+    @pyro_method
+    def predict(self, batch, t_rec=-1):
+        """
+        Computes scores for each user in batch at time step t.
+        NB: Not scalable for large batch.
+        
+        batch['click_seq'] : tensor.Long(), size = [batch, timesteps]
+        """
+        return self.forward(batch, t_rec=t_rec, mode = "predict")
+
 
 
 
@@ -546,7 +712,7 @@ class RNN_Model(PyroRecommender):
         return out
 
     @pyro_method
-    def forward(self, batch, mode = "likelihood", t=None):
+    def forward(self, batch, mode = "likelihood", t_rec=None):
         click_seq = batch['click']
         userIds = batch['userId']
 
@@ -588,7 +754,7 @@ class RNN_Model(PyroRecommender):
         # NB: DOES NOT WORK FOR LARGE BATCHES:
         if mode =="predict":
             
-            zt_last = Z[:, t, ]
+            zt_last = Z[:, t_rec, ]
             score = self.scorefunc(zt_last.unsqueeze(1), itemvec.unsqueeze(0))
             return score, H
 
@@ -635,14 +801,14 @@ class RNN_Model(PyroRecommender):
 
     #@torch.no_grad()
     @pyro_method
-    def predict(self, batch, t=-1):
+    def predict(self, batch, t_rec=-1):
         """
         Computes scores for each user in batch at time step t.
         NB: Not scalable for large batch.
         
         batch['click_seq'] : tensor.Long(), size = [batch, timesteps]
         """
-        return self.forward(batch, t=t, mode = "predict")
+        return self.forward(batch, t_rec=t_rec, mode = "predict")
 
 def build_linear_pyromodule(nn_mod = nn.Linear, scale = 1.0, **kwargs):
     layer = PyroModule[nn_mod](**kwargs)

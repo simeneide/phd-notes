@@ -37,7 +37,7 @@ def main(**kwargs):
             ind2val, itemattr, dataloaders = prepare.load_dataloaders(
                     data_dir="data_real",
                     data_type="lake-noclickrate-0.2",
-                    batch_size=512,
+                    batch_size=1024,
                     split_trainvalid=0.95,
                     num_workers=0,
                     override_candidate_sampler="actual",
@@ -46,7 +46,8 @@ def main(**kwargs):
             param['num_items'] = len(ind2val['itemId'])
             param['num_groups'] = len(np.unique(itemattr['category']))
             param['num_users'], param['maxlen_time'], param['maxlen_slate'] = dataloaders['train'].dataset.data['action'].size()
-            dataloaders['train'].dataset.data['userId'] = torch.arange(0, param['num_users'])
+            param['num_users'] = param['num_users']+1
+            param['num_displayTypes'] = 3
         else:
             #%% Place all items in a group:
             item_group = 1 + (torch.arange(param['num_items']) //
@@ -80,6 +81,8 @@ def main(**kwargs):
             model = models.AR1_Model(**param, item_group=torch.tensor(itemattr['category']).long())
         elif param['model_type'] == "adalinear":
             model = models.AdaptiveLinear_Model(**param, item_group=torch.tensor(itemattr['category']).long())
+        elif param['model_type'] == "markov":
+            model = models.Markov_Model(**param, item_group=torch.tensor(itemattr['category']).long())
             
         guide = models.MeanFieldGuide(model=model, batch=dummybatch, **param)
 
@@ -108,7 +111,8 @@ def main(**kwargs):
                                         learning_rate=param['learning_rate'],
                                         sim=test_sim,
                                         device = param.get("device"),
-                                        calc_footrule = param.get("calc_footrule"))
+                                        calc_footrule = param.get("calc_footrule"),
+                                        ind2val = ind2val)
 
 
         #%%
