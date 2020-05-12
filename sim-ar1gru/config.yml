@@ -1,10 +1,13 @@
 
 # MODEL PARAMETERS
-name: markov-lr01-maxscale30
+name: linear
 train_seed: 1
 real_data: True
-item_dim: 10
-hidden_dim: 10
+device: cuda
+
+# Simulation settings
+collect_data_randompct: 0.7
+num_displayTypes: 3
 num_users: 500
 maxlen_time: 20
 maxlen_slate: 4
@@ -15,19 +18,22 @@ true_bias_noclick: 3.0
 true_gamma: 0.90
 num_test_users: 200
 t_testsplit: 5
-device: cuda
-model_type: markov
-dist: "l2"
-collect_data_randompct: 0.7
-num_displayTypes: 3
-### Priors
+
+### MODEL SETTINGS ###
+item_dim: 10
+#hidden_dim: 10
+user_model: linear
+item_model: itemhier
+dist: l2
+user_init: True # should initial user state be user dependent or global?
+
+# priors
 prior_scale: 0.1 # scales the weight of the prior vs likelihood in optimization
 guide_maxscale: 0.3
 prior_softmax_mult_scale: 3.0
 prior_groupvec_scale: 0.5
 prior_groupscale_scale: 1.0
 prior_userinit_scale: 1.0
-guide_userinit: False
 prior_bias_scale: 5.0
 # AR(1) priors
 prior_gamma_mean: 0.5
@@ -36,11 +42,11 @@ prior_gamma_scale: 1.0
 prior_rnn_scale: 2.0
 
 # TRAINING PARAMETERS
-max_epochs : 5000
+max_epochs : 1000
 start_true: False
 batch_size: 256
 learning_rate: 0.01
-patience: 100
+patience: 30
 calc_footrule: False
 # 
 

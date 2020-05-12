@@ -4,6 +4,7 @@ import utils
 from joblib import Parallel, delayed
 import names
 default_param = utils.load_param()
+"""
 jobs = []
 for dist in ['l2']:
     for maxlen_slate in [4]:
@@ -29,7 +30,6 @@ for dist in ['l2']:
         }
         jobs.append(delayed(run.main)(**random_par))
 
-        # %% 
         for train_seed in range(1):
             for model_type in ['ar1', 'adalinear']: #  #,,, 'rnn'
                 for guide_userinit in [True, False]: # , False  False
@@ -44,6 +44,24 @@ for dist in ['l2']:
                             }
                         update_pars['name'] = f"{names.get_full_name().replace(' ','-')}, COLLECT_RANDOM, " + ", ".join([f"{key}:{val}" for key, val in update_pars.items()])
                         jobs.append(delayed(run.main)(**update_pars))
+"""
+# %%
+
+#%%
+parameter_sets = {
+    'model_type' : ["linear","gru","markov"],
+    'user_init' : [True, False],
+    'item_dim' : [5, 10]
+}
 
 # %%
-Parallel(n_jobs=8)(jobs)
+from itertools import product
+configs = [dict(zip(parameter_sets, v)) for v in product(*parameter_sets.values())]
+
+jobs = []
+for update_par in configs:
+    update_par['name'] = f"{names.get_full_name().replace(' ','-')}, " + ", ".join([f"{key}:{val}" for key, val in update_par.items()])
+    jobs.append(delayed(run.main)(**update_par))
+
+# %%
+Parallel(n_jobs=6)(jobs)

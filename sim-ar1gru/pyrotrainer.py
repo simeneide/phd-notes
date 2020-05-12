@@ -100,7 +100,7 @@ class PyroTrainer:
                                               values=par,
                                               global_step=self.step)
 
-        if (phase == "train") & (ep % 5 == 0):
+        if (phase == "train") & (ep % 1 == 0):
             #try:
                 import FINNPlot
                 idx = 10
