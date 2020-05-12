@@ -572,8 +572,8 @@ class Markov_Model(PyroRecommender):
             H_list = [h0]
             for t in range(t_maxclick):
                 gamma_batch = torch.zeros_like(click_seq[:,t]).unsqueeze(-1)
-                gamma_batch[(click_seq[:,t]==1)] = 1.0
-                
+                gamma_batch[(click_seq[:,t]<3)] = 1.0 # set dummy gamma to 1
+
                 h_new = gamma_batch * H_list[-1] + (1-gamma_batch)*click_vecs[:,t]
                 H_list.append(h_new)
 

@@ -138,7 +138,7 @@ class PyroTrainer:
                 for batch in dl:
                     if phase == "train":
                         tmp_log = self.training_step(batch)
-                        self.step += batch_sized
+                        self.step += batch_size
                     else:
                         tmp_log = self.validation_step(batch)
                     # Add tmp log to log list for phase
@@ -226,8 +226,8 @@ class RecTrainer(PyroTrainer):
 
         ## LIKELIHOODS
         
-    
-        guide_trace = poutine.trace(self.guide).get_trace(batch)
+        guide_mode = lambda *args, **kwargs: self.guide(temp=0.0001, *args, **kwargs)
+        guide_trace = poutine.trace(guide_mode).get_trace(batch)
         model_with_guidepar = poutine.replay(self.model, trace=guide_trace)
         model_trace = poutine.trace(model_with_guidepar).get_trace(batch)
         model_trace.compute_log_prob()

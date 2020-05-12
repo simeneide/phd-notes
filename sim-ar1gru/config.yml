@@ -1,6 +1,6 @@
 
 # MODEL PARAMETERS
-name: adalinear-dim10-userinit-reg-noclickNoGeo-h_0.3
+name: markov-lr01-maxscale30
 train_seed: 1
 real_data: True
 item_dim: 10
@@ -16,18 +16,18 @@ true_gamma: 0.90
 num_test_users: 200
 t_testsplit: 5
 device: cuda
-model_type: adalinear
+model_type: markov
 dist: "l2"
 collect_data_randompct: 0.7
-
+num_displayTypes: 3
 ### Priors
-prior_scale: 1 # scales the weight of the prior vs likelihood in optimization
-guide_maxscale: 0.01
+prior_scale: 0.1 # scales the weight of the prior vs likelihood in optimization
+guide_maxscale: 0.3
 prior_softmax_mult_scale: 3.0
-prior_groupvec_scale: 0.2
-prior_groupscale_scale: 0.03
-prior_userinit_scale: 0.3
-guide_userinit: True
+prior_groupvec_scale: 0.5
+prior_groupscale_scale: 1.0
+prior_userinit_scale: 1.0
+guide_userinit: False
 prior_bias_scale: 5.0
 # AR(1) priors
 prior_gamma_mean: 0.5
@@ -39,14 +39,14 @@ prior_rnn_scale: 2.0
 max_epochs : 5000
 start_true: False
 batch_size: 256
-learning_rate: 0.025
+learning_rate: 0.01
 patience: 100
 calc_footrule: False
 # 
 
 # DATA PREPROC PARAMETERS
-end_date: 2020-05-04
-lookback: 10
+end_date: 2020-05-09
+lookback: 2
 lookforward_test: 0
 data_type: lake-noclickrate-0.2
 data_path: gs://recommendation-exploded/sequences/lake-noclickrate-0.2
@@ -55,4 +55,5 @@ sample_type: actual
 proxy_rate: 0.0
 maxlen_time: 15
 min_user_clicks: 10
-maxlen_action: 35
+maxlen_action: 19
+min_item_views: 400
