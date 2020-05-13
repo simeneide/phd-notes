@@ -88,28 +88,42 @@ def main(**kwargs):
             pyro.param(f"{key}-scale", torch.zeros_like(val)+ 1e-5)
             print(key)
 
-    #%%
-    if not param['real_data']:
+    #%% Define callbacks:
+
+    # Common callbacks:
+    optim = pyrotrainer.SviStep(model=model, guide=guide, **param)
+
+    step_callbacks = [optim, pyrotrainer.calc_batch_stats]
+
+    phase_end_callbacks = [
+        pyrotrainer.report_phase_end, 
+        pyrotrainer.ReportPyroParameters(), 
+        pyrotrainer.EarlyStoppingAndCheckpoint(stopping_criteria=param['stopping_criteria'], patience=param['patience'])
+        ]
+
+    after_training_callbacks = [pyrotrainer.ReportHparam(param)]
+
+    if param['real_data']:
+        plot_finn_ads = pyrotrainer.PlotFinnAdsRecommended(ind2val, epoch_interval=10)
+        phase_end_callbacks.append(plot_finn_ads)
+        after_training_callbacks.append(pyrotrainer.VisualizeEmbeddings())
+    else:        
         test_sim = simulator.Simulator(**param, env=env)
-    else:
-        test_sim=None
-
-    trainer = pyrotrainer.RecTrainer(model=model,
-                                    guide=guide,
-                                    dataloaders = dataloaders,
-                                    max_epoch=param['max_epochs'],
-                                    name=param['name'],
-                                    param=param,
-                                    patience=param['patience'],
-                                    learning_rate=param['learning_rate'],
-                                    sim=test_sim,
-                                    device = param.get("device"),
-                                    calc_footrule = param.get("calc_footrule"),
-                                    ind2val = ind2val)
-
-
+        step_callbacks.append(pyrotrainer.Simulator_batch_stats(test_sim))
+        after_training_callbacks.append(pyrotrainer.VisualizeEmbeddings(sim=test_sim))
+        after_training_callbacks.append(pyrotrainer.RewardComputation(param, test_sim))
     #%%
-    trainer.fit()
+        trainer = pyrotrainer.PyroTrainer(
+            model, 
+            guide, 
+            dataloaders, 
+            before_training_callbacks = [pyrotrainer.checksum_data],
+            after_training_callbacks = after_training_callbacks,
+            step_callbacks = step_callbacks, 
+            phase_end_callbacks = phase_end_callbacks,
+            max_epoch=param['max_epochs'],
+            **param)
+        trainer.fit()
 
 if __name__ == "__main__":
     main()

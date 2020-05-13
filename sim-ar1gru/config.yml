@@ -1,6 +1,6 @@
 
 # MODEL PARAMETERS
-name: linear-noinit
+name: linear-noinit-real
 train_seed: 1
 real_data: False
 device: cuda
@@ -19,13 +19,27 @@ true_gamma: 0.90
 num_test_users: 200
 t_testsplit: 5
 
+# DATA PREPROC PARAMETERS
+end_date: 2020-05-09
+lookback: 2
+lookforward_test: 0
+data_type: lake-noclickrate-0.2
+data_path: gs://recommendation-exploded/sequences/lake-noclickrate-0.2
+data_dir: data_real
+sample_type: actual
+proxy_rate: 0.0
+maxlen_time: 20
+min_user_clicks: 10
+maxlen_action: 19
+min_item_views: 400
+
 ### MODEL SETTINGS ###
-item_dim: 10
+item_dim: 3
 #hidden_dim: 10
 user_model: linear
 item_model: itemhier
 dist: l2
-user_init: False # should initial user state be user dependent or global?
+user_init: True # should initial user state be user dependent or global?
 
 # priors
 prior_scale: 0.1 # scales the weight of the prior vs likelihood in optimization
@@ -48,18 +62,5 @@ batch_size: 256
 learning_rate: 0.01
 patience: 30
 calc_footrule: False
+stopping_criteria: valid/loss
 # 
-
-# DATA PREPROC PARAMETERS
-end_date: 2020-05-09
-lookback: 2
-lookforward_test: 0
-data_type: lake-noclickrate-0.2
-data_path: gs://recommendation-exploded/sequences/lake-noclickrate-0.2
-data_dir: data_real
-sample_type: actual
-proxy_rate: 0.0
-maxlen_time: 15
-min_user_clicks: 10
-maxlen_action: 19
-min_item_views: 400
