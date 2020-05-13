@@ -38,15 +38,15 @@ def main(**kwargs):
         ind2val, itemattr, dataloaders = prepare.load_dataloaders(
                 data_dir="data_real",
                 data_type="lake-noclickrate-0.2",
-                batch_size=1024,
-                split_trainvalid=0.95,
+                batch_size=param['batch_size'],
+                split_trainvalid=param['split_trainvalid'],
                 num_workers=0,
                 override_candidate_sampler="actual",
                 t_testsplit = param['t_testsplit'])
 
         param['num_items'] = len(ind2val['itemId'])
         param['num_groups'] = len(np.unique(itemattr['category']))
-        param['num_users'], param['maxlen_time'], param['maxlen_slate'] = dataloaders['train'].dataset.data['action'].size()
+        param['num_users'], param['maxlen_time'], _ = dataloaders['train'].dataset.data['action'].size()
         param['num_users'] = param['num_users']+1
         param['num_displayTypes'] = 3
     else:

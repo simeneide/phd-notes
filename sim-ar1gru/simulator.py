@@ -19,7 +19,7 @@ def collect_simulated_data(sim, policy_epsilon=0.5, seed = 0, **kwargs):
     torch.manual_seed(seed)
     random.seed(seed)
     randomagent = agents.RandomSystem(num_items=kwargs['num_items'],
-                                      maxlen_slate=kwargs['maxlen_slate'])
+                                      maxlen_action=kwargs['maxlen_action'])
 
     def policy_epsilon_greedy(policy_epsilon=policy_epsilon, *args, **kwargs):
         if random.random() < policy_epsilon:
@@ -60,7 +60,7 @@ class Simulator(Dataset):
             'batch_size' : 128,
             'env' : None,
             'maxlen_time' : None,
-            'maxlen_slate' : None,
+            'maxlen_action' : None,
             'device' : "cpu",
             }
         # Register all input vars in module:
@@ -75,7 +75,7 @@ class Simulator(Dataset):
         """ 
         Reset data. If data and t_start is supplied, it is reset to that state
         Data has to be as in the dataloader e.g. 
-        - the action tensor is of shape [num_users, maxlen_time, maxlen_slate]
+        - the action tensor is of shape [num_users, maxlen_time, maxlen_action]
         - zero-padded for time that havent happened yet.
         """
         self.pos = 0  # counter when adding
@@ -85,7 +85,7 @@ class Simulator(Dataset):
             torch.arange(self.num_users),
             'action':
             torch.zeros((self.num_users, self.maxlen_time,
-                            self.maxlen_slate)).long().to(self.device),
+                            self.maxlen_action)).long().to(self.device),
             'click':
             torch.zeros(
                 (self.num_users, self.maxlen_time)).long().to(self.device),
@@ -106,9 +106,9 @@ class Simulator(Dataset):
     def __getitem__(self, idx):
         return {key: val[idx, ] for key, val in self.data.items()}
 
-    def build_dataloaders(self, batch_size=512, num_testusers =100, t_testsplit=10, **kwargs):
+    def build_dataloaders(self, batch_size, split_trainvalid, t_testsplit, **kwargs):
         torch.manual_seed(0)
-        perm_user = torch.randperm(self.num_users)
+        num_testusers = int(self.num_users*(1-split_trainvalid))
         valid_user_idx = torch.arange(num_testusers)
         train_user_idx = torch.arange(num_testusers, self.num_users)
         self.data['mask_train'] = torch.ones_like(self.data['click'])
@@ -184,7 +184,7 @@ class Simulator(Dataset):
         for t in range(t_start, t_end): 
             assert t == self.t # make sure internal counter and playgame counter is in sync.
             # Let agent recommend:
-            action = agent_function(batch=batch, num_rec=self.maxlen_slate -
+            action = agent_function(batch=batch, num_rec=self.maxlen_action -
                                     1, **kwargs).to(self.device)
             #print(action)
             # Let environment generate a click and return an updated user history

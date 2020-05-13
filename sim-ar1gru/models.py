@@ -47,8 +47,8 @@ class PyroRecommender(PyroModule):
 
         self.bias_noclick = PyroSample(
             prior = dist.Normal(
-                torch.zeros((self.maxlen_slate +1,)),
-                self.prior_bias_scale * torch.ones( (self.maxlen_slate +1,))
+                torch.zeros((self.maxlen_action +1,)),
+                self.prior_bias_scale * torch.ones( (self.maxlen_action +1,))
             ))
     ## 
     def init_set_of_real_parameters(self, seed = 1):
@@ -59,7 +59,7 @@ class PyroRecommender(PyroModule):
         # Initialize common parameters:
         par_real['softmax_mult'] =  torch.tensor(self.true_softmax_mult).float()
         #par_real['gamma'] = torch.tensor(self.true_gamma)
-        par_real['bias_noclick'] = self.true_bias_noclick * torch.ones( (self.maxlen_slate +1,))
+        par_real['bias_noclick'] = self.true_bias_noclick * torch.ones( (self.maxlen_action +1,))
 
         # Initalize item parameters:
         par_real_item = self.item_model.init_set_of_real_parameters(seed)
