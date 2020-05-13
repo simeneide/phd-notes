@@ -29,7 +29,7 @@ def chunker(seq, size):
     return (seq[pos:pos + size] for pos in range(0, len(seq), size))
 
 class PyroRecommender(PyroModule):
-    """ A Pyro Recommender Module. Have some common functionalities that are shared among all recommenders"""
+    """ A Pyro Recommender Module """
     def __init__(self, **kwargs):
         super().__init__()
         # Register all input vars in module:
@@ -51,6 +51,40 @@ class PyroRecommender(PyroModule):
                 self.prior_bias_scale * torch.ones( (self.maxlen_slate +1,))
             ))
     ## 
+    def init_set_of_real_parameters(self, seed = 1):
+        """ If the model is functioning as an environment this function will initialize it with the true parameters."""
+        torch.manual_seed(seed)
+        par_real = {}
+
+        # Initialize common parameters:
+        par_real['softmax_mult'] =  torch.tensor(self.true_softmax_mult).float()
+        #par_real['gamma'] = torch.tensor(self.true_gamma)
+        par_real['bias_noclick'] = self.true_bias_noclick * torch.ones( (self.maxlen_slate +1,))
+
+        # Initalize item parameters:
+        par_real_item = self.item_model.init_set_of_real_parameters(seed)
+        for key, val in par_real_item.items():
+            par_real[f'item_model.{key}'] = val
+
+        # Init user parameters:
+        par_real_user = self.user_model.init_set_of_real_parameters(seed)
+        for key, val in par_real_user.items():
+            par_real[f'user_model.{key}'] = val
+
+        # Init USER INIT parameters
+        # Set user initial conditions to specific groups:
+        self.user_init_group = torch.randint(self.num_groups, (self.num_users,))
+        par_real['h0'] = par_real['item_model.groupvec.weight'][self.user_init_group]
+
+        self.par_real = par_real
+
+    def get_real_par(self, batch):
+
+        """ Function that outputs a set of real parameters, including setting h0-batch which is batch specific"""
+        out = self.par_real
+        out['h0-batch'] = self.par_real["h0"][batch['userId']]
+        return out
+
     @pyro_method
     def forward(self, batch, mode = "likelihood", t_rec=None):
         with poutine.scale(scale=self.prior_scale): # scale all prior params here
@@ -174,12 +208,11 @@ class PyroRecommender(PyroModule):
         topk = torch.zeros((len(click_seq), num_rec), device=self.device)
 
         i = 0
-        for click_chunk, displayType, userId in zip(
-            chunker(click_seq, chunksize),
-            chunker(batch['displayType'], chunksize),
-            chunker(batch['userId'], chunksize)):
+        for batch_chunk in dict_chunker(batch, chunksize):
+            
             pred, ht = self.predict_cond(
-                batch={'click' : click_chunk, 'userId' : userId, 'displayType' : displayType}, t_rec=t_rec, par=par)
+                batch=batch_chunk, t_rec=t_rec, par=par)
+            
             topk_chunk = 3 + pred[:, 3:].argsort(dim=1,
                                                  descending=True)[:, :num_rec]
             topk[i:(i + len(pred))] = topk_chunk
@@ -239,6 +272,11 @@ class PyroRecommender(PyroModule):
         if self.item_dim == 3:
             visualize_3d_scatter(self.par_real['item_model.itemvec.weight'])
 
+def dict_chunker(dict_of_seqs, size):
+    "Iterates over the first dimension of a dict of sequences"
+    length = len(dict_of_seqs[list(dict_of_seqs.keys())[0]]) # length of first idex
+    return ( {key : seq[pos:pos + size] for key, seq in dict_of_seqs.items()} for pos in range(0, length, size))
+
 class UserLinear(PyroModule):
     """ 
     H_t+1 = gamma*H_t + (1-gamma)*v_{c_{t-1}^u}
@@ -251,6 +289,7 @@ class UserLinear(PyroModule):
         num_users,
         prior_userinit_scale,
         device="cpu", 
+        true_gamma=None,
         **kwargs,
         ):
         super().__init__()
@@ -259,8 +298,14 @@ class UserLinear(PyroModule):
         self.num_users = num_users
         self.prior_userinit_scale = prior_userinit_scale
         self.device = device
+        self.true_gamma = true_gamma
         # Parameters:
         self.gamma = PyroSample( dist.Normal(torch.tensor( self.prior_gamma_mean),torch.tensor(self.prior_gamma_scale)) )
+
+    def init_set_of_real_parameters(self, seed = 1):
+        par_real = {}
+        par_real['gamma'] = torch.tensor(self.true_gamma)
+        return par_real
 
     def forward(self,batch, V, h0):
         batch_size, t_maxclick = batch['click'].size()
@@ -292,6 +337,8 @@ class UserMarkov(PyroModule):
         super().__init__()
         self.device = device
 
+    def init_set_of_real_parameters(self, seed = 1):
+        return {}
     def forward(self,batch, V, h0):
 
         batch_size, t_maxclick = batch['click'].size()
@@ -402,11 +449,13 @@ class ItemHier(PyroModule):
     def __init__(self,
                  item_dim,
                  num_items,
+                 num_groups,
                  item_group=None,
                  hidden_dim=None,
                  device="cpu", **kwargs):
         super().__init__()
         self.item_dim = item_dim
+        self.num_groups = num_groups
         self.hidden_dim = item_dim if hidden_dim == None else hidden_dim
         self.num_items = num_items
         self.device = device
@@ -443,6 +492,33 @@ class ItemHier(PyroModule):
         self.itemvec.weight = PyroSample(lambda x: dist.Normal(
             self.groupvec(self.item_group),
             self.groupscale(self.item_group).clamp(0.001, 0.99)).to_event(2))
+    
+    def init_set_of_real_parameters(self, seed=1):
+        par_real = {}
+        groupvec = generate_random_points_on_d_surface(
+            d=self.item_dim, 
+            num_points=self.num_groups, 
+            radius= 0.5 + 0.5*torch.rand((self.num_groups,1) ),
+            max_angle=3.14)
+            
+        par_real['groupvec.weight'] = groupvec
+
+        par_real['groupscale.weight'] = torch.ones_like(groupvec)*0.1
+
+        # Get item vector placement locally inside the group cluster
+        V_loc = generate_random_points_on_d_surface(
+            d=self.item_dim, 
+            num_points=self.num_items,
+            radius=1,
+            max_angle=3.14)
+
+        V = (groupvec[self.item_group] + 0.1 * V_loc)
+
+        # Special items 0 and 1 is in middle:
+        V[:2, :] = 0
+
+        par_real['itemvec.weight'] = V
+        return par_real
 
     @pyro_method
     def forward(self, idx=None):
@@ -493,7 +569,7 @@ class MeanFieldGuide:
                     posterior[node] = pyro.sample(
                         node,
                         dist.Normal(mean[batch['userId']], temp*scale[batch['userId']]).to_event(1))
-            elif node == "gamma":
+            elif node == "user_model.gamma":
                 mean = pyro.param(f"{node}-mean",
                                     init_tensor= par.detach().clone(), constraint = constraints.interval(0,1.0))
                 scale = pyro.param(f"{node}-scale",

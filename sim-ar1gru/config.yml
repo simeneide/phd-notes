@@ -1,8 +1,8 @@
 
 # MODEL PARAMETERS
-name: linear
+name: linear-noinit
 train_seed: 1
-real_data: True
+real_data: False
 device: cuda
 
 # Simulation settings
@@ -25,7 +25,7 @@ item_dim: 10
 user_model: linear
 item_model: itemhier
 dist: l2
-user_init: True # should initial user state be user dependent or global?
+user_init: False # should initial user state be user dependent or global?
 
 # priors
 prior_scale: 0.1 # scales the weight of the prior vs likelihood in optimization
