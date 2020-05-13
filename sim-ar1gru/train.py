@@ -113,17 +113,17 @@ def main(**kwargs):
         after_training_callbacks.append(pyrotrainer.VisualizeEmbeddings(sim=test_sim))
         after_training_callbacks.append(pyrotrainer.RewardComputation(param, test_sim))
     #%%
-        trainer = pyrotrainer.PyroTrainer(
-            model, 
-            guide, 
-            dataloaders, 
-            before_training_callbacks = [pyrotrainer.checksum_data],
-            after_training_callbacks = after_training_callbacks,
-            step_callbacks = step_callbacks, 
-            phase_end_callbacks = phase_end_callbacks,
-            max_epoch=param['max_epochs'],
-            **param)
-        trainer.fit()
+    trainer = pyrotrainer.PyroTrainer(
+        model, 
+        guide, 
+        dataloaders, 
+        before_training_callbacks = [pyrotrainer.checksum_data],
+        after_training_callbacks = after_training_callbacks,
+        step_callbacks = step_callbacks, 
+        phase_end_callbacks = phase_end_callbacks,
+        max_epoch=param['max_epochs'],
+        **param)
+    trainer.fit()
 
 if __name__ == "__main__":
     main()
