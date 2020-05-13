@@ -441,7 +441,7 @@ def load_dataloaders(data_dir,
     with open(f'{data_dir}/ind2val.pickle', 'rb') as handle:
         ind2val = pickle.load(handle)
 
-    num_testusers = int(len(dataset) * split_trainvalid)
+    num_testusers = int(len(dataset) * (1-split_trainvalid))
     torch.manual_seed(0)
     num_users = len(dataset)
     perm_user = torch.randperm(num_users)
