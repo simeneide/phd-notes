@@ -4,25 +4,26 @@ import utils
 from joblib import Parallel, delayed
 import names
 
+param = utils.load_param()
 
 jobs = []
+if param['real_data'] is False:
+    optimal_par = {
+        'model_type' : 'linear',
+        'start_true' : True,
+        'learning_rate' : 0,
+        'name' : f'optimal'
+    }
+    jobs.append(delayed(run.main)(**optimal_par))
 
-optimal_par = {
-    'model_type' : 'linear',
-    'start_true' : True,
-    'learning_rate' : 0,
-    'name' : f'optimal'
-}
-jobs.append(delayed(run.main)(**optimal_par))
 
-
-random_par = {
-    'model_type' : 'linear',
-    'start_true' : False,
-    'learning_rate' : 0,
-    'name' : f'random'
-}
-jobs.append(delayed(run.main)(**random_par))
+    random_par = {
+        'model_type' : 'linear',
+        'start_true' : False,
+        'learning_rate' : 0,
+        'name' : f'random'
+    }
+    jobs.append(delayed(run.main)(**random_par))
 
 # %%
 
