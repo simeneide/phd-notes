@@ -416,8 +416,9 @@ class PlotFinnAdsRecommended:
             smallbatch = {key: val[self.idx].unsqueeze(0).to(trainer.device).long() for key, val in trainer.dataloaders['train'].dataset.data.items()}
             M = torch.zeros(self.num_recs+1, self.num_time)
             M[0,:] = smallbatch['click'].flatten()[:self.num_time] # add view to first row
+            guide = lambda *args, **kwargs: trainer.guide(*args, **kwargs, temp=0)
             for t_rec in range(self.num_time):
-                M[1:, t_rec] = trainer.model.recommend(smallbatch, par=trainer.guide, num_rec=self.num_recs, t_rec=t_rec)
+                M[1:, t_rec] = trainer.model.recommend(smallbatch, par= guide, num_rec=self.num_recs, t_rec=t_rec)
 
             nrow = M.size()[1]
             finnkoder = [self.ind2val['itemId'][r.item()] for r in M.flatten()]
