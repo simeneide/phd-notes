@@ -105,10 +105,10 @@ def build_global_ind2val(sqlContext, sequences, data_dir, drop_groups=False, min
     q = f"""
         select id, {', '.join(category_pars)}
         from ad_content
-        where (first_published >= '{published_after}')
-        AND state = 'ACTIVATED'
+        where (published >= '{published_after}')
         """
-        #
+        #        AND state = 'ACTIVATED'
+
 
     content = (
         FINNHelper.contentdb(sqlContext, q)
@@ -127,12 +127,12 @@ def build_global_ind2val(sqlContext, sequences, data_dir, drop_groups=False, min
     content = df.withColumn('contentDB', F.lit(True)).persist()
 
     items = (
-        active_items.join(
-            w2v_items_spark, on='id',
-            how='inner')  # USE ONLY ITEMS THAT ARE PRESENT IN W2V!!
-        .join(content, on='id',
-              how='left').filter((F.col('contentDB') == True)
-                                 | (F.col('actions') >= min_item_views*5)))
+        active_items
+        .join(w2v_items_spark, on='id',how='inner')  # USE ONLY ITEMS THAT ARE PRESENT IN W2V!!
+        .join(content, on='id',how='left')
+        .filter((F.col('contentDB') == True))
+        )
+    
     logging.info(
         f'There are {active_items.count()} items with actions. Found {content.count()} items in contentDB. Found {w2v_items_spark.count()} in pretrained w2v.'
     )
