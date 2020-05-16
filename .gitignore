@@ -11,3 +11,6 @@ core*
 *.log
 events.out.tfevents*
 ludewig/
+*/tensorboard/
+*/experiments/
+*/data*
