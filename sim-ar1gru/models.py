@@ -418,21 +418,21 @@ def build_linear_pyromodule(nn_mod = nn.Linear, scale = 1.0, **kwargs):
     return layer
 
 class Gru(PyroModule):
-    def __init__(self, input_size, hidden_size, bias):
+    def __init__(self, input_size, hidden_size, bias=False, scale=1.0):
         super().__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.bias = bias
-        self.scale = 1.0
-        self.W_z = build_linear_pyromodule(in_features=hidden_size, out_features= input_size, bias=False)
+        self.scale = scale
+        self.W_z = build_linear_pyromodule(in_features=hidden_size, out_features= input_size, bias=self.bias, scale=self.scale)
 
-        self.W_ir = build_linear_pyromodule(in_features = input_size, out_features = hidden_size, bias=False)
-        self.W_id = build_linear_pyromodule(in_features = input_size, out_features = hidden_size, bias=False)
-        self.W_in = build_linear_pyromodule(in_features = input_size, out_features = hidden_size, bias=False)
+        self.W_ir = build_linear_pyromodule(in_features = input_size, out_features = hidden_size, bias=self.bias, scale=self.scale)
+        self.W_id = build_linear_pyromodule(in_features = input_size, out_features = hidden_size, bias=self.bias, scale=self.scale)
+        self.W_in = build_linear_pyromodule(in_features = input_size, out_features = hidden_size, bias=self.bias, scale=self.scale)
 
-        self.W_hr = build_linear_pyromodule(in_features = hidden_size, out_features = hidden_size, bias=False)
-        self.W_hd = build_linear_pyromodule(in_features = hidden_size, out_features = hidden_size, bias=False)
-        self.W_hn = build_linear_pyromodule(in_features = hidden_size, out_features = hidden_size, bias=False)
+        self.W_hr = build_linear_pyromodule(in_features = hidden_size, out_features = hidden_size, bias=self.bias, scale=self.scale)
+        self.W_hd = build_linear_pyromodule(in_features = hidden_size, out_features = hidden_size, bias=self.bias, scale=self.scale)
+        self.W_hn = build_linear_pyromodule(in_features = hidden_size, out_features = hidden_size, bias=self.bias, scale=self.scale)
 
         self.act = nn.Sigmoid()
 
@@ -572,6 +572,17 @@ class MeanFieldGuide:
             elif node == "user_model.gamma":
                 mean = pyro.param(f"{node}-mean",
                                     init_tensor= par.detach().clone(), constraint = constraints.interval(0,1.0))
+                scale = pyro.param(f"{node}-scale",
+                                    init_tensor=0.01 +
+                                    0.05 * par.detach().clone().abs(),
+                                    constraint=constraints.interval(0,self.maxscale))
+                posterior[node] = pyro.sample(
+                    node,
+                    dist.Normal(mean, temp*scale).independent())
+            elif "item_model" in node:
+                mean = pyro.param(f"{node}-mean",
+                                    init_tensor= par.detach().clone().clamp(-0.9,0.9),
+                                    constraint=constraints.interval(-1,1))
                 scale = pyro.param(f"{node}-scale",
                                     init_tensor=0.01 +
                                     0.05 * par.detach().clone().abs(),
