@@ -120,8 +120,9 @@ class PyroTrainer:
 #######
 
 class VisualizeEmbeddings:
-    def __init__(self, sim=None):
+    def __init__(self, sim=None, ind2val = None):
         self.sim = sim
+        self.ind2val = ind2val
 
     def __call__(self, trainer, **kwargs):
         # Visualize item vectors:
@@ -139,7 +140,11 @@ class VisualizeEmbeddings:
 
         # %% PLOT OF item vector parameters
         V = pyro.param('item_model.itemvec.weight-mean').detach().cpu()
-        trainer.writer.add_embedding(tag="V",mat= V, metadata=trainer.model.item_model.item_group.cpu(), global_step=trainer.step)
+        if self.ind2val:
+            labels = [self.ind2val['category'][int(i)] for i in trainer.model.item_model.item_group.cpu()]
+        else:
+            labels = [int(i) for i in trainer.model.item_model.item_group.cpu()]
+        trainer.writer.add_embedding(tag="V",mat= V, metadata=labels, global_step=trainer.step)
 
 class RewardComputation:
     def __init__(self, param, test_sim):
@@ -404,7 +409,7 @@ class PlotFinnAdsRecommended:
     def __init__(self, ind2val, epoch_interval=10):
         import FINNPlot
         self.ind2val = ind2val
-        self.idx = 10
+        self.idx = 11
         self.num_recs=5
         self.num_time=10
         self.epoch_interval = epoch_interval

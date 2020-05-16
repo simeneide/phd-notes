@@ -29,9 +29,11 @@ if param['real_data'] is False:
 
 #%%
 parameter_sets = {
-    'user_model' : ["linear","gru","markov"],
-    'user_init' : [True, False],
-    'item_dim' : [4]
+    'user_model' : ["gru", "markov"], # ,"markov" "linear",
+    'user_init' : [False], # , False
+    'item_dim' : [15],
+    'guide_maxscale' : [0.005],
+    'prior_scale' : [1.0, 1e-6]
 }
 
 # %%
@@ -43,4 +45,4 @@ for update_par in configs:
     jobs.append(delayed(train.main)(**update_par))
 
 # %%
-Parallel(n_jobs=6)(jobs)
+Parallel(n_jobs=4)(jobs)

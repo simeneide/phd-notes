@@ -1,12 +1,13 @@
 
 # MODEL PARAMETERS
-name: linear-noinit-real
+name: gru-h0-noguidescale-dim49-unitball
 train_seed: 1
 real_data: True
 device: cuda
-maxlen_action: 19
+maxlen_action: 25
 maxlen_time: 20
 split_trainvalid: 0.95
+
 # Simulation settings
 collect_data_randompct: 0.7
 num_displayTypes: 3
@@ -20,8 +21,8 @@ true_gamma: 0.90
 t_testsplit: 5
 
 # DATA PREPROC PARAMETERS
-end_date: 2020-05-09
-lookback: 2
+end_date: 2020-05-13
+lookback: 40
 lookforward_test: 0
 data_type: lake-noclickrate-0.2
 data_path: gs://recommendation-exploded/sequences/lake-noclickrate-0.2
@@ -31,18 +32,18 @@ min_item_views: 400
 
 
 ### MODEL SETTINGS ###
-item_dim: 4
+item_dim: 49
 #hidden_dim: 10
-user_model: markov
+user_model: gru
 item_model: itemhier
 dist: l2
-user_init: True # should initial user state be user dependent or global?
+user_init: False # should initial user state be user dependent or global?
 
 # priors
 prior_scale: 1.0 # scales the weight of the prior vs likelihood in optimization
-guide_maxscale: 0.3
+guide_maxscale: 0.001
 prior_softmax_mult_scale: 3.0
-prior_groupvec_scale: 0.5
+prior_groupvec_scale: 5.0
 prior_groupscale_scale: 0.05
 prior_userinit_scale: 0.5
 prior_bias_scale: 5.0
@@ -55,7 +56,7 @@ prior_rnn_scale: 2.0
 # TRAINING PARAMETERS
 max_epochs : 500
 start_true: False
-batch_size: 1024
+batch_size: 2056
 learning_rate: 0.01
 patience: 30
 calc_footrule: False

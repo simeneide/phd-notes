@@ -17,6 +17,7 @@ import numpy as np
 logging.basicConfig(format='%(asctime)s %(message)s', level='INFO')
 import prepare
 from prepare import SequentialDataset
+
 #%%
 def main(**kwargs):
     param = utils.load_param()
@@ -98,13 +99,13 @@ def main(**kwargs):
     phase_end_callbacks = [
         pyrotrainer.report_phase_end, 
         pyrotrainer.ReportPyroParameters(), 
-        pyrotrainer.EarlyStoppingAndCheckpoint(stopping_criteria=param['stopping_criteria'], patience=param['patience'])
+        pyrotrainer.EarlyStoppingAndCheckpoint(stopping_criteria=param['stopping_criteria'], patience=param['patience'], name =param['name'])
         ]
 
     after_training_callbacks = [pyrotrainer.ReportHparam(param)]
 
     if param['real_data']:
-        plot_finn_ads = pyrotrainer.PlotFinnAdsRecommended(ind2val, epoch_interval=10)
+        plot_finn_ads = pyrotrainer.PlotFinnAdsRecommended(ind2val, epoch_interval=3)
         phase_end_callbacks.append(plot_finn_ads)
         after_training_callbacks.append(pyrotrainer.VisualizeEmbeddings())
     else:        
