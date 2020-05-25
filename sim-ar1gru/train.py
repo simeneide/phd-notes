@@ -28,11 +28,11 @@ def main(**kwargs):
             logging.info(f"Overwriting parameter {key} to {val}.")
             param[key] = val
     except:
-        logging.info("Did no overwrite of default param.")
-    param['hidden_dim'] = param['item_dim']
+        logging.info("ERROR: Did no overwrite of default param.")
 
     if param['device'] == "cuda":
         torch.set_default_tensor_type('torch.cuda.FloatTensor')
+
     if param.get('real_data'):
         logging.info("Loading real data")
 
@@ -45,26 +45,27 @@ def main(**kwargs):
                 override_candidate_sampler="actual",
                 t_testsplit = param['t_testsplit'])
 
-        param['num_items'] = len(ind2val['itemId'])
-        param['num_groups'] = len(np.unique(itemattr['category']))
-        param['num_users'], param['maxlen_time'], _ = dataloaders['train'].dataset.data['action'].size()
-        param['num_users'] = param['num_users']+1
-        param['num_displayTypes'] = 3
     else:
+        sim_param = utils.load_sim_param()
         #%% Place all items in a group:
-        item_group = 1 + (torch.arange(param['num_items']) //
-                    (param['num_items'] / (param['num_groups']-1))).long()
+        item_group = 1 + (torch.arange(sim_param['num_items']) //
+                    (sim_param['num_items'] / (sim_param['num_groups']-1))).long()
         item_group[:3] = 0 # first three items are special group
         itemattr = {'category': item_group.cpu().numpy()}
 
         # %% TRAIN: MODEL+CALLBACKS+TRAINER
         pyro.clear_param_store()
-        env = models.PyroRecommender(**param, item_group=torch.tensor(itemattr['category']))
+        env = models.PyroRecommender(**sim_param, item_group=torch.tensor(itemattr['category']))
         env.init_set_of_real_parameters()
-        sim = simulator.Simulator(**param, env=env)
+        sim = simulator.Simulator(**sim_param, env=env)
         ind2val, itemattr, dataloaders, sim = simulator.collect_simulated_data(
-            sim, policy_epsilon=param['collect_data_randompct'], **param)
+            sim, policy_epsilon=sim_param['collect_data_randompct'], **sim_param)
 
+    param['num_items'] = len(ind2val['itemId'])
+    param['num_groups'] = len(np.unique(itemattr['category']))
+    param['num_users'], param['maxlen_time'], _ = dataloaders['train'].dataset.data['action'].size()
+    param['num_users'] = param['num_users']+1
+    #param['num_displayTypes'] = 3
     # Move data to device
     #for key, val in dataloaders['train'].dataset.data.items():
     #    dataloaders['train'].dataset.data[key] = val.to(param['device'])
@@ -102,7 +103,7 @@ def main(**kwargs):
         pyrotrainer.EarlyStoppingAndCheckpoint(stopping_criteria=param['stopping_criteria'], patience=param['patience'], name =param['name'])
         ]
 
-    after_training_callbacks = [pyrotrainer.ReportHparam(param)]
+    after_training_callbacks = []
 
     if param['real_data']:
         plot_finn_ads = pyrotrainer.PlotFinnAdsRecommended(ind2val, epoch_interval=3)
@@ -113,6 +114,8 @@ def main(**kwargs):
         step_callbacks.append(pyrotrainer.Simulator_batch_stats(test_sim))
         after_training_callbacks.append(pyrotrainer.VisualizeEmbeddings(sim=test_sim))
         after_training_callbacks.append(pyrotrainer.RewardComputation(param, test_sim))
+    
+    after_training_callbacks.append(pyrotrainer.ReportHparam(param))
     #%%
     trainer = pyrotrainer.PyroTrainer(
         model, 

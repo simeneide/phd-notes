@@ -38,12 +38,12 @@ class PyroRecommender(PyroModule):
 
 
         # Set parameters
-        self.item_model = ItemHier(**kwargs)
+        self.item_model = item_models[self.item_model](**kwargs)
         self.user_model = user_models[self.user_model](**kwargs)
         self.scorefunc = scorefunctions[self.dist]
 
         # Common for all:
-        self.softmax_mult = PyroSample( prior = dist.Normal(torch.tensor(1.0), self.prior_softmax_mult_scale *torch.tensor(1.0)))
+        self.softmax_mult = PyroSample( prior = dist.Normal(torch.tensor(5.0), self.prior_softmax_mult_scale *torch.tensor(1.0)))
 
         self.bias_noclick = PyroSample(
             prior = dist.Normal(
@@ -103,12 +103,12 @@ class PyroRecommender(PyroModule):
                     # Sample initial hidden state of users:
                     h0 = pyro.sample("h0-batch", 
                     dist.Normal(
-                        torch.zeros((batch_size, self.item_dim)), 
-                        self.prior_userinit_scale*torch.ones((batch_size, self.item_dim))
+                        torch.zeros((batch_size, self.hidden_dim)), 
+                        self.prior_userinit_scale*torch.ones((batch_size, self.hidden_dim))
                         ).to_event(1)
                         )
             else:
-                h0 = torch.zeros((batch_size, self.item_dim))
+                h0 = torch.zeros((batch_size, self.hidden_dim))
 
             Z = self.user_model(batch, V=itemvec, h0=h0)
 
@@ -300,6 +300,7 @@ class UserLinear(PyroModule):
         self.device = device
         self.true_gamma = true_gamma
         # Parameters:
+        logging.info(f"Initializing Linear User with gamma prior N({self.prior_gamma_mean}, {self.prior_gamma_scale}).")
         self.gamma = PyroSample( dist.Normal(torch.tensor( self.prior_gamma_mean),torch.tensor(self.prior_gamma_scale)) )
 
     def init_set_of_real_parameters(self, seed = 1):
@@ -362,6 +363,7 @@ class UserGRU(PyroModule):
     def __init__(
         self,
         item_dim,
+        hidden_dim,
         num_users,
         prior_userinit_scale,
         prior_rnn_scale,
@@ -370,6 +372,7 @@ class UserGRU(PyroModule):
         ):
         super().__init__()
         self.item_dim = item_dim
+        self.hidden_dim = hidden_dim
         self.num_users = num_users
         self.prior_userinit_scale = prior_userinit_scale
         self.prior_rnn_scale = prior_rnn_scale
@@ -377,7 +380,7 @@ class UserGRU(PyroModule):
         # Parameters:
         self.rnn = Gru(
             input_size=self.item_dim,
-            hidden_size=self.item_dim,
+            hidden_size=self.hidden_dim,
             bias=False)
         set_noninform_prior(self.rnn, scale = self.prior_rnn_scale)
 
@@ -385,32 +388,25 @@ class UserGRU(PyroModule):
         batch_size, t_maxclick = batch['click'].size()
         click_vecs = V[batch['click']]
 
-        H_list = [h0]
+        Z_list = [self.rnn.hidden2output(h0)]
+        h_new = h0
         for t in range(t_maxclick):
-            h_old = H_list[-1]
-            output, h_new = self.rnn(
+            h_old = h_new
+
+            h_new = self.rnn(
                 click_vecs[:,t], 
                 h_old
                 )
             # If dummy or noClick do not update h:
             stay_constant = ( batch['click'][:,t] < 3 )
             h_new[stay_constant] =  h_old[stay_constant]
+            
+            output = self.rnn.hidden2output(h_new)
 
-            H_list.append(h_new)
+            Z_list.append(output)
 
-        H = torch.cat( [h.unsqueeze(1) for h in H_list], dim =1)
-        return H
-
-
-scorefunctions = {
-    'l2' : score_euclidean,
-    'dot': score_dot}
-
-user_models = {
-    'markov' : UserMarkov,
-    'linear' : UserLinear,
-    'gru' : UserGRU
-}
+        Z = torch.cat( [h.unsqueeze(1) for h in Z_list], dim =1)
+        return Z
 
 def build_linear_pyromodule(nn_mod = nn.Linear, scale = 1.0, **kwargs):
     layer = PyroModule[nn_mod](**kwargs)
@@ -441,9 +437,70 @@ class Gru(PyroModule):
         update_gate = self.act(self.W_id(input) + self.W_hd(h_prev))
         new_gate = nn.Tanh()( self.W_in(input) + reset_gate * ( self.W_hn(h_prev)) )
         hidden_new = (1-update_gate) * new_gate + update_gate * h_prev
-        output = self.W_z(hidden_new)
-        return output, hidden_new
+        return hidden_new
 
+    @pyro_method
+    def hidden2output(self, hidden):
+        output = self.W_z(hidden)
+        output = output.clamp(-1,1)
+        return output
+
+class ItemPreinit(PyroModule):
+    def __init__(self,
+                 item_dim,
+                 num_items,
+                 data_dir,
+                 device="cpu", **kwargs):
+        super().__init__()
+        self.item_dim = item_dim
+        self.num_items = num_items
+        self.device = device
+        self.data_dir = data_dir
+
+        logging.info(f"Initializing itemPretrained")
+        import prepare
+        self.itemvec = nn.Embedding(num_embeddings=self.num_items, embedding_dim=self.item_dim)
+        w2v = nn.Parameter(torch.tensor(prepare.get_w2v_item(self.data_dir)).float().to(self.device))
+        assert self.itemvec.weight.size() == w2v.size(), "Shape mismatch between config and pretrained item vectors"
+        
+        self.itemvec.weight = w2v
+    
+    def init_set_of_real_parameters(self, seed=1):
+        par_real = {}
+        return par_real
+
+    @pyro_method
+    def forward(self, idx=None):
+        if idx is None:
+            idx = torch.arange(self.num_items).to(self.device)
+        return self.itemvec(idx)
+
+class ItemPretrained(PyroModule):
+    def __init__(self,
+                 item_dim,
+                 num_items,
+                 data_dir,
+                 device="cpu", **kwargs):
+        super().__init__()
+        self.item_dim = item_dim
+        self.num_items = num_items
+        self.device = device
+        self.data_dir = data_dir
+
+        logging.info(f"Initializing itemPretrained")
+        import prepare
+        self.itemvec = torch.tensor(prepare.get_w2v_item(self.data_dir)).float().to(self.device)
+        #assert self.itemvec.weight.size() == w2v.size(), "Shape mismatch between config and pretrained item vectors"
+    
+    def init_set_of_real_parameters(self, seed=1):
+        par_real = {}
+        return par_real
+
+    @pyro_method
+    def forward(self, idx=None):
+        if idx is None:
+            idx = torch.arange(self.num_items).to(self.device)
+        return self.itemvec[idx]
 
 class ItemHier(PyroModule):
     def __init__(self,
@@ -498,7 +555,7 @@ class ItemHier(PyroModule):
         groupvec = generate_random_points_on_d_surface(
             d=self.item_dim, 
             num_points=self.num_groups, 
-            radius= 0.5 + 0.5*torch.rand((self.num_groups,1) ),
+            radius= 0.1 + 0.7*torch.rand((self.num_groups,1) ),
             max_angle=3.14)
             
         par_real['groupvec.weight'] = groupvec
@@ -547,7 +604,7 @@ class MeanFieldGuide:
                 self.prior_median[node] = None
                 logging.info(f"Could not sample init values for {node}")
 
-    def __call__(self, batch=None, temp = 1.0, num_samples=10):
+    def __call__(self, batch=None, temp = 1.0):
         posterior = {}
         for node, site in self.model_trace.iter_stochastic_nodes():
             par = self.prior_median[node]
@@ -556,7 +613,8 @@ class MeanFieldGuide:
                 pass
             elif node == 'h0-batch':
                 mean = pyro.param(f"h0-mean",
-                                    init_tensor = 0.01*torch.rand((self.num_users, self.hidden_dim)))
+                                    init_tensor = 0.01*torch.rand((self.num_users, self.hidden_dim)), 
+                                    constraint = constraints.interval(0,1.0))
                 scale = pyro.param(f"h0-scale",
                                     init_tensor=0.05 +
                                     0.01 * 0.01*torch.rand((self.num_users, self.hidden_dim)),
@@ -581,7 +639,7 @@ class MeanFieldGuide:
                     dist.Normal(mean, temp*scale).independent())
             elif "item_model" in node:
                 mean = pyro.param(f"{node}-mean",
-                                    init_tensor= par.detach().clone().clamp(-0.9,0.9),
+                                    init_tensor= par.detach().clone().clamp(-1.0,1.0),
                                     constraint=constraints.interval(-1,1))
                 scale = pyro.param(f"{node}-scale",
                                     init_tensor=0.01 +
@@ -589,10 +647,12 @@ class MeanFieldGuide:
                                     constraint=constraints.interval(0,self.maxscale))
                 posterior[node] = pyro.sample(
                     node,
-                    dist.Normal(mean, temp*scale).independent())
+                    dist.Normal(mean, temp*scale).independent()).clamp(-1.0,1.0)
             else:
                 mean = pyro.param(f"{node}-mean",
-                                    init_tensor= par.detach().clone())
+                                    init_tensor= par.detach().clone(),
+                                    constraint = constraints.interval(-5.0,5.0)
+                                    )
                 scale = pyro.param(f"{node}-scale",
                                     init_tensor=0.01 +
                                     0.05 * par.detach().clone().abs(),
@@ -678,3 +738,17 @@ def set_noninform_prior(mod, scale=1.0):
             PyroSample(
                 dist.Normal(torch.zeros_like(par),
                             scale * torch.ones_like(par)).independent()))
+
+scorefunctions = {
+    'l2' : score_euclidean,
+    'dot': score_dot}
+
+user_models = {
+    'markov' : UserMarkov,
+    'linear' : UserLinear,
+    'gru' : UserGRU,
+}
+
+item_models = {
+    'hier' : ItemHier,
+    'pretrained' : ItemPretrained}

@@ -137,14 +137,23 @@ class VisualizeEmbeddings:
                 usergroup=None
 
             trainer.writer.add_embedding(tag="h0",mat= h0, metadata=usergroup, global_step=trainer.step)
+        try:
+            # %% PLOT OF item vector parameters
+            V = pyro.param('item_model.itemvec.weight-mean').detach().cpu()
+            if self.ind2val:
+                labels = [self.ind2val['category'][int(i)] for i in trainer.model.item_model.item_group.cpu()]
+                group_labels = self.ind2val['category'].values()
+            else:
+                labels = [int(i) for i in trainer.model.item_model.item_group.cpu()]
+                group_labels=None
+            trainer.writer.add_embedding(tag="V",mat= V, metadata=labels, global_step=trainer.step)
 
-        # %% PLOT OF item vector parameters
-        V = pyro.param('item_model.itemvec.weight-mean').detach().cpu()
-        if self.ind2val:
-            labels = [self.ind2val['category'][int(i)] for i in trainer.model.item_model.item_group.cpu()]
-        else:
-            labels = [int(i) for i in trainer.model.item_model.item_group.cpu()]
-        trainer.writer.add_embedding(tag="V",mat= V, metadata=labels, global_step=trainer.step)
+            #%% PLOT ITEM GROUPS
+            Vg = pyro.param("item_model.groupvec.weight-mean").detach().cpu().numpy()
+            trainer.writer.add_embedding(tag="V_group",mat= Vg, metadata=group_labels, global_step=trainer.step)
+        except:
+            logging.info("Could not visualize item embeddings")
+            pass
 
 class RewardComputation:
     def __init__(self, param, test_sim):
@@ -213,7 +222,7 @@ class RewardComputation:
 
 class ReportHparam:
     def __init__(self, hyperparam):
-        self.hyperparam = hyperparam
+        self.hyperparam = copy.deepcopy(hyperparam)
 
     def __call__(self, trainer, **kwargs):
         ### Add hyperparameters and final metrics to hparam:
@@ -298,7 +307,7 @@ def calc_batch_stats(trainer, phase, batch):
 # 
 @torch.no_grad()
 def report_phase_end(trainer, phase, logs, **kwargs):
-    """ Function that reports all values (scalars) in logs to trainer.writer"""
+    """ Function that reports all values (scalars) in logs to trainer.writer """
     keys = logs[0].keys()  # take elements of first dict and they are all equal
     summed_stats = {key: sum([l[key] for l in logs]) for key in keys}
 
