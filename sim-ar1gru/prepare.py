@@ -41,30 +41,44 @@ def load_postcodes_to_spark(sqlContext):
     However, we will only need to postnr -> fylke columns
     '''
 
-    postkode = pd.read_table('postkoder.csv', sep=',')[['Postnr', 'Fylke']]
-    postkode.columns = ['post_code', 'region']
+    postkode = pd.read_table('postkoder.csv', sep=',')[['Postnr',"Byområde2",'Kommune', 'Fylke']]
+    postkode.columns = ['post_code','city_area','municipality', 'region']
 
     def stringify_postcode(x):
         x = str(x)
         return '0' * (4 - len(x)) + x
 
     postkode['post_code'] = postkode.post_code.map(stringify_postcode)
+    postkode['city_area'] = postkode.city_area.map(lambda x: str(x))
+    postkode['municipality'] = postkode.municipality.map(lambda x: str(x))
+
     postcode_spark = sqlContext.createDataFrame(postkode)
     return postcode_spark
 
 
 def add_catvar_if_above_threshold(df, catvar, th=100):
     df = df.withColumn('proposed_category',
-                       F.concat_ws('-', 'category', catvar))
+                       F.concat_ws(',', 'category', catvar))
 
-    accepted_categories = (df.groupby('proposed_category').count().filter(
-        F.col('count') > th).withColumn('keep', F.lit(True)).drop('count'))
-    df = (df.join(
-        accepted_categories, on='proposed_category', how='left').withColumn(
-            'category',
-            F.when(
-                F.col('keep') == 'true', F.col('proposed_category')).otherwise(
-                    F.col('category'))).drop('keep').drop('proposed_category'))
+    accepted_categories = (
+        df
+        .groupby('proposed_category')
+        .count()
+        .filter(F.col('count') > th)
+        .withColumn('keep', F.lit(True))
+        .drop('count')
+        )
+
+    df = (
+        df
+        .join(accepted_categories, on='proposed_category', how='left')
+        .withColumn('category',F.when(
+                F.col('keep') == 'true', F.col('proposed_category'))
+                .otherwise(
+                    F.col('category'))
+                    )
+        .drop('keep').drop('proposed_category')
+        )
     return df
 
 
@@ -86,7 +100,7 @@ def build_global_ind2val(sqlContext, sequences, data_dir, drop_groups=False, min
     w2v_items_spark = (sqlContext.createDataFrame(
         list(w2v_item2ind.keys()), StringType()).withColumnRenamed(
             'value', 'id').withColumn('w2v_exist', F.lit(True))).persist()
-
+    
     #%%
     # Fetch all items published 90 days before start_date:
     logging.info("Get items from contentDB..")
@@ -97,13 +111,18 @@ def build_global_ind2val(sqlContext, sequences, data_dir, drop_groups=False, min
     published_before = start_date
     postcode_spark = load_postcodes_to_spark(sqlContext)
 
-    category_pars = [
+    query_pars = [
         'vertical', 'main_category', 'sub_category', 'prod_category', 'make',
         'post_code', 'model'
     ]
 
+    category_pars = [
+        'vertical', 'main_category','region', 
+        'sub_category', 'prod_category', 'make', 'model','municipality','city_area'
+    ]
+
     q = f"""
-        select id, {', '.join(category_pars)}
+        select id, {', '.join(query_pars)}
         from ad_content
         where (published >= '{published_after}')
         """
@@ -114,30 +133,32 @@ def build_global_ind2val(sqlContext, sequences, data_dir, drop_groups=False, min
         FINNHelper.contentdb(sqlContext, q)
         # Use regions instead of postcodes (but keep name):
         .join(postcode_spark, on='post_code',
-              how='left').drop('post_code').withColumnRenamed(
-                  'region', 'post_code')
+              how='left').drop('post_code')
         # CONCAT CATEGORY STRINGS
-        .fillna('', subset=category_pars).dropDuplicates(['id']))
-
-    ## BUILD CATEGORY STRUCTURE:
-    df = content.withColumn('category', F.col(category_pars[0]))
-    for catvar in category_pars[1:]:  # skip first (vertical)
-        df = add_catvar_if_above_threshold(df=df, catvar=catvar, th=100)
-
-    content = df.withColumn('contentDB', F.lit(True)).persist()
+        .fillna('', subset=category_pars).dropDuplicates(['id'])
+        .withColumn('contentDB', F.lit(True))
+        )
 
     items = (
         active_items
         .join(w2v_items_spark, on='id',how='inner')  # USE ONLY ITEMS THAT ARE PRESENT IN W2V!!
-        .join(content, on='id',how='left')
-        .filter((F.col('contentDB') == True))
+        .join(content, on='id',how='inner')
+        .coalesce(1)
         )
+
+    ## BUILD CATEGORY STRUCTURE:
+    df = items.withColumn('category', F.col(category_pars[0]))
+    for catvar in category_pars[1:]:  # skip first (vertical)
+        df = add_catvar_if_above_threshold(df=df, catvar=catvar, th=200)
+
+    items = df.drop(*category_pars)
+
+    #logging.info(
+    #    f'There are {active_items.count()} items with actions. Found {content.count()} items in contentDB. Found {w2v_items_spark.count()} in pretrained w2v.'
+    #)
     
-    logging.info(
-        f'There are {active_items.count()} items with actions. Found {content.count()} items in contentDB. Found {w2v_items_spark.count()} in pretrained w2v.'
-    )
-    logging.info(f'After filters we are left with {items.count()} items.')
     items_loc = items.toPandas()
+    logging.info(f'After filters we are left with {items_loc.shape[0]} items.')
 
     ### CONCAT DUMMYITEMS WITH REAL ITEMS:
     # Create some dummyitems
@@ -532,7 +553,7 @@ def get_w2v_item(data_dir, end_date=None):
 #%%
 
 if __name__ == '__main__':
-    sc, sqlContext = FINNHelper.create_spark_cluster(driver_memory='60G',
+    sc, sqlContext = FINNHelper.create_spark_cluster(driver_memory='70G', executor_memory='70G',
                                                      max_result_size='16G')
     torch.set_grad_enabled(False)
     param = utils.load_param()
@@ -568,15 +589,14 @@ if __name__ == '__main__':
                 F.col('date') < end_test_date)  # remove future data
         .filter(F.col('date') >= start_date)  # remove old data
     )
-
+    
     ## Prepare item indicies
     logging.info('Prepare ind2item and item attributes..')
     ind2val, itemattr = build_global_ind2val(sqlContext,
                                              sequences=sequences,
                                              data_dir=param.get('data_dir'),
-                                             drop_groups=param.get(
-                                                 'drop_category', False),
-                                                 min_item_views = param.get("min_item_views", 100))
+                                             drop_groups=param.get('drop_category', False),
+                                             min_item_views = param.get("min_item_views", 100))
 
 
     ## Prepare Users
