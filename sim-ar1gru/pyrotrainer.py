@@ -336,22 +336,28 @@ class SviStep:
         model, 
         guide,
         learning_rate=1e-2,
+        clip_norm=10,
+        num_particles = 1,
         device = "cpu",
         **kwargs
         ):
         self.model = model
         self.guide = guide
+        self.clip_norm = clip_norm
         self.learning_rate = learning_rate
+        self.num_particles = num_particles
         self.device = device
 
         self.init_opt()
 
     def init_opt(self):
-        logging.info(f"Initializing default Adam optimizer with lr={self.learning_rate}")
+        logging.info(f"Initializing default Adam optimizer with lr={self.learning_rate}, clip_norm={self.clip_norm}, num_particles ={self.num_particles}")
         self.svi = pyro.infer.SVI(model=self.model,
                                   guide=self.guide,
-                                  optim=pyro.optim.Adam({"lr": self.learning_rate}),
-                                  loss=pyro.infer.TraceMeanField_ELBO())
+                                  optim=pyro.optim.ClippedAdam({
+                                      "lr": self.learning_rate, 
+                                      "clip_norm" : self.clip_norm}),
+                                  loss=pyro.infer.Trace_ELBO(num_particles=self.num_particles))
         return True
 
     def __call__(self, trainer, phase, batch):

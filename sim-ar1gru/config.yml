@@ -44,6 +44,8 @@ prior_rnn_scale: 2.0
 
 # TRAINING PARAMETERS
 max_epochs : 1000
+clip_norm: 100
+num_particles: 1
 start_true: False
 batch_size: 2056
 learning_rate: 0.01
