@@ -127,10 +127,11 @@ def main(**kwargs):
         phase_end_callbacks = phase_end_callbacks,
         max_epoch=param['max_epochs'],
         **param)
-    trainer.fit()
+    return param, ind2val, trainer
 
 if __name__ == "__main__":
-    main()
+    param, ind2val, trainer = main()
+    trainer.fit()
 
 
 # %%
