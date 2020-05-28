@@ -21,16 +21,17 @@ min_item_views: 400
 
 
 ### MODEL SETTINGS ###
+init_dim: 2
 item_dim: 50
 hidden_dim: 100
 user_model: gru
 item_model: pretrained
-dist: dot
+dist: l2
 user_init: False # should initial user state be user dependent or global?
 
 # priors
 prior_scale: 1.0 # scales the weight of the prior vs likelihood in optimization
-guide_maxscale: 0.001
+guide_maxscale: 1.0
 prior_softmax_mult_scale: 5.0
 prior_groupvec_scale: 5.0
 prior_groupscale_scale: 0.05
@@ -48,7 +49,7 @@ clip_norm: 100
 num_particles: 1
 start_true: False
 batch_size: 2056
-learning_rate: 0.01
+learning_rate: 0.001
 patience: 60
 calc_footrule: False
 stopping_criteria: valid/loss

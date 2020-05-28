@@ -44,7 +44,7 @@ class PyroRecommender(PyroModule):
 
         # Common for all:
         self.softmax_mult = PyroSample( prior = dist.Normal(torch.tensor(5.0), self.prior_softmax_mult_scale *torch.tensor(1.0)))
-
+        self.init_to_h0 = build_linear_pyromodule(in_features=self.init_dim, out_features= self.hidden_dim, bias=True, scale=1.0)
         self.bias_noclick = PyroSample(
             prior = dist.Normal(
                 torch.zeros((self.maxlen_action +1,)),
@@ -84,14 +84,20 @@ class PyroRecommender(PyroModule):
         out = self.par_real
         out['h0-batch'] = self.par_real["h0"][batch['userId']]
         return out
-
+    
     @pyro_method
-    def forward(self, batch, mode = "likelihood", t_rec=None):
+    def forward(self, *args, **kwargs):
+        """ Need to abstract away using forward for the main logic so we can trace with .forward() in production afterwards"""
+        return self._compute(*args, **kwargs)
+    
+    @pyro_method
+    def _compute(self, batch, mode = "likelihood", t_rec=None):
         with poutine.scale(scale=self.prior_scale): # scale all prior params here
 
             batch_size, t_maxclick = batch['click'].size()
             # sample item dynamics
             itemvec = self.item_model()
+            
 
             # Sample user dynamic parameters:
             softmax_mult = self.softmax_mult
@@ -101,23 +107,20 @@ class PyroRecommender(PyroModule):
             if self.user_init:
                 with pyro.plate("user-init-plate", size = self.num_users, subsample = batch['userId']):
                     # Sample initial hidden state of users:
-                    h0 = pyro.sample("h0-batch", 
+                    init_user = pyro.sample("h0-batch", 
                     dist.Normal(
-                        torch.zeros((batch_size, self.hidden_dim)), 
-                        self.prior_userinit_scale*torch.ones((batch_size, self.hidden_dim))
+                        torch.zeros((batch_size, self.init_dim)), 
+                        self.prior_userinit_scale*torch.ones((batch_size, self.init_dim))
                         ).to_event(1)
                         )
             else:
-                h0 = torch.zeros((batch_size, self.hidden_dim))
-
+                init_user = torch.zeros((batch_size, self.init_dim))
+            h0 = self.init_to_h0(init_user)
             Z = self.user_model(batch, V=itemvec, h0=h0)
 
         # NB: DOES NOT WORK FOR LARGE BATCHES:
-        if mode =="predict":
-            
-            zt_last = Z[:, t_rec, ]
-            score = self.scorefunc(zt_last.unsqueeze(1), itemvec.unsqueeze(0))
-            return score, Z
+        if mode =="userprofile":
+            return Z
 
         target_idx = batch['click_idx']
 
@@ -159,20 +162,29 @@ class PyroRecommender(PyroModule):
         return {'score' : scores, 'zt' : Z, 'V' : itemvec}
 
     @pyro_method
-    def predict(self, batch, t_rec=-1):
+    def predict(self, batch, t_rec=-1, production=False):
         """
         Computes scores for each user in batch at time step t.
         NB: Not scalable for large batch.
         
         batch['click_seq'] : tensor.Long(), size = [batch, timesteps]
         """
-        return self.forward(batch, t_rec=t_rec, mode = "predict")
+        Z = self._compute(batch, mode = "userprofile")
+
+        if production is True:
+            itemvec = self.item_embedding.weight.data
+        else:
+            itemvec = self.item_model()
+
+        zt_last = Z[:, t_rec, ]
+        score = self.scorefunc(zt_last.unsqueeze(1), itemvec.unsqueeze(0))
+        return score, Z
 
     ## GENERAL FUNCTIONS ###
     @pyro_method
     def simulate(self, batch):
         return pyro.condition(
-            lambda batch: self.forward(batch, mode="simulate"),
+            lambda batch: self._compute(batch, mode="simulate"),
             data=self.get_real_par(batch))(batch)
 
     @pyro_method
@@ -181,7 +193,7 @@ class PyroRecommender(PyroModule):
             par = self.get_real_par(batch)
 
         return pyro.condition(
-            lambda batch: self.forward(batch, mode="likelihood"),
+            lambda batch: self._compute(batch, mode="likelihood"),
             data=par)(batch)
 
     @pyro_method
@@ -260,6 +272,21 @@ class PyroRecommender(PyroModule):
             topk[i:(i + len(pred))] = topk_chunk
             i += len(pred)
         return topk
+    
+    ## PRODUCTION FUNCTIONS ##
+    def predict_production(self, click_seq):
+        batch = {'click' : click_seq}
+        score, Z = self.predict(batch, t_rec=-1,production=True)
+        return score
+
+    def prepare_model_for_production(self):
+        """ All steps necessary post-training to make model traceable. NB: Changes the self object and is non-reversible"""
+        self.item_embedding = nn.Embedding(self.item_model.itemvec.size()[0], self.item_model.itemvec.size()[1])
+        logging.warning("NB: In building candidate embeddings: Assumes that itemvec is fixed. This is true for pretrained models, but not when you train items")
+        self.item_embedding.weight = nn.Parameter(self.item_model.itemvec)
+
+        self.forward = self.predict_production
+
     def visualize_item_space(self):
         if self.item_dim ==2:
             V = self.par_real['item_model.itemvec.weight'].cpu()
@@ -585,8 +612,9 @@ class ItemHier(PyroModule):
 
 
 class MeanFieldGuide:
-    def __init__(self, model, batch, item_dim, num_users, hidden_dim, num_samples = 50, **kwargs):
+    def __init__(self, model, batch, item_dim, num_users, hidden_dim, init_dim, num_samples = 50, **kwargs):
         self.item_dim = item_dim
+        self.init_dim = init_dim
         self.num_users = num_users
         self.hidden_dim = hidden_dim
         self.maxscale = kwargs.get("guide_maxscale", 0.1)
@@ -613,11 +641,11 @@ class MeanFieldGuide:
                 pass
             elif node == 'h0-batch':
                 mean = pyro.param(f"h0-mean",
-                                    init_tensor = 0.01*torch.rand((self.num_users, self.hidden_dim)), 
-                                    constraint = constraints.interval(0,1.0))
+                                    init_tensor = 0.1*torch.rand((self.num_users, self.init_dim)), 
+                                    constraint = constraints.interval(-1.0,1.0))
                 scale = pyro.param(f"h0-scale",
-                                    init_tensor=0.05 +
-                                    0.01 * 0.01*torch.rand((self.num_users, self.hidden_dim)),
+                                    init_tensor=0.2 +
+                                    0.01 * 0.01*torch.rand((self.num_users, self.init_dim)),
                                     constraint=constraints.interval(0,self.maxscale))
                 if self.user_init is False:
                     mean = torch.zeros_like(mean)
