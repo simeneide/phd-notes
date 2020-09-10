@@ -13,10 +13,10 @@ import random
 
 
 class RandomSystem:
-    def __init__(self, num_items, maxlen_slate , *args, **kwargs):
+    def __init__(self, num_items, maxlen_action , *args, **kwargs):
         super().__init__()
         self.num_items = num_items
-        self.maxlen_slate = maxlen_slate
+        self.maxlen_action = maxlen_action
 
     def forward(self, *args, **kwargs):
         return None
@@ -27,6 +27,6 @@ class RandomSystem:
             torch.randperm(self.num_items - 2).unsqueeze(0)
             for _ in range(batch_size)
         ])
-        action = action[:, :(self.maxlen_slate - 1)]
+        action = action[:, :(self.maxlen_action - 1)]
         return action
 

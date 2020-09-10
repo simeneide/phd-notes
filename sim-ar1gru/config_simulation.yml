@@ -1,0 +1,14 @@
+# Simulation settings
+collect_data_randompct: 0.5
+num_displayTypes: 3
+num_users: 5000
+num_items: 50
+num_groups: 10
+true_softmax_mult: 5.0 # multiply all softmax with this
+true_bias_noclick: 0.0
+true_gamma: 0.90
+item_dim: 2
+user_model: linear
+item_model: hier
+dist: l2
+user_init: True # should initial user state be user dependent or global?
