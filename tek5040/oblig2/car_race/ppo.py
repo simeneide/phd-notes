@@ -7,7 +7,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.keras import activations, layers, losses, optimizers
 import gym
-
+tf.keras.backend.set_floatx('float64')
 from car_race.common import preprocess, ActionEncoder
 from car_race.eval_policy import eval_policy
 from car_race.networks import FeatureExtractor, PolicyNetwork, ValueNetwork
@@ -37,7 +37,7 @@ def sample_episodes(env, policy_network, action_encoder, num_episodes, maxlen, a
             pi_old = activations.softmax(logits)[0]
 
             episode.observations.append(observation[0])
-            episode.ts.append(np.float32(t))
+            episode.ts.append(np.float64(t))
             episode.actions.append(action.numpy())
             episode.probs_old.append(pi_old.numpy())
 
@@ -66,7 +66,7 @@ def create_dataset(env, policy_network, value_network, action_encoder, num_episo
 
         # Could also get this when sampling episodes for efficiency
         # use predict?
-        values = np.concatenate([value_network(np.expand_dims(o_t, 0), np.expand_dims(np.float32(maxlen)-t, 0)).numpy() for o_t, t in zip(episode.observations, episode.ts)])
+        values = np.concatenate([value_network(np.expand_dims(o_t, 0), np.expand_dims(np.float64(maxlen)-t, 0)).numpy() for o_t, t in zip(episode.observations, episode.ts)])
         returns = calculate_returns(episode.rewards, gamma)
         advantages = returns - values
 
@@ -103,7 +103,7 @@ def calculate_returns(rewards, gamma):
     ##    
     T = len(rewards)
     D = np.arange(0,T)
-    returns = np.zeros(len(rewards), dtype=np.float32)
+    returns = np.zeros(len(rewards), dtype=np.float64)
 
     for t in range(T):
         discount = gamma**D[:(T-t)]
@@ -130,7 +130,7 @@ def value_loss(target, prediction):
     # The dummy output required a tensor of the same shape as target. but then its impossible to reduce to do mean. 
     # Outputting the squared difference for each datapoint
     
-    return ((target-prediction)**2)
+    return tf.reduce_mean((target-prediction)**2)
 
 def policy_loss(pi_a, pi_old_a, advantage, epsilon):
     """Calculate policy loss as in https://arxiv.org/abs/1707.06347
@@ -148,8 +148,12 @@ def policy_loss(pi_a, pi_old_a, advantage, epsilon):
         loss : scalar loss value
     """
 
+    u = pi_a/pi_old_a
+    u_clip = tf.clip_by_value(u, 1-epsilon, 1+epsilon)
+    loss = tf.reduce_mean(advantage * tf.minimum( u, u_clip))
+
     # TODO: implement policy loss
-    loss = tf.constant(0, dtype=tf.float32) # remove this line
+    #loss = tf.constant(0, dtype=tf.float64) # remove this line
 
     return loss
 
@@ -176,7 +180,7 @@ def estimate_improvement(pi_a, pi_old_a, advantage, t, gamma):
     """
 
     # TODO: Implement this
-    return tf.zeros(tf.shape(advantage), dtype=tf.float32) # remove this line
+    return tf.zeros(tf.shape(advantage), dtype=tf.float64) # remove this line
 
 def estimate_improvement_lb(pi_a, pi_old_a, advantage, t, gamma, epsilon):
     """Estimate sample contributions to lower bound for improvement, ignoring
@@ -202,7 +206,7 @@ def estimate_improvement_lb(pi_a, pi_old_a, advantage, t, gamma, epsilon):
     """
 
     # TODO: Implement this
-    return tf.zeros(tf.shape(advantage), dtype=tf.float32) # remove this line
+    return tf.zeros(tf.shape(advantage), dtype=tf.float64) # remove this line
 
 def entropy(p):
     """Entropy base 2, for each sample in batch."""
@@ -228,8 +232,8 @@ def entropy_loss(pi):
         scalar, average negative entropy for the distributions
     """
     # TODO: Implement this
-
-    return tf.zeros(tf.shape(pi)[0], dtype=tf.float32) # remove this line
+    return -tf.reduce_mean(entropy(pi))
+    #return tf.zeros(tf.shape(pi)[0], dtype=tf.float64) # remove this line
 
 class Agent(tf.keras.models.Model):
     """Convenience wrapper around policy network, which returns *encoded*
@@ -264,15 +268,15 @@ def main():
     agent._set_inputs(np.zeros([1, 96, 96, 3]))
 
     # use to keep track of best model
-    mean_high = tf.Variable(0, dtype='float32', name='mean_high', trainable=False)
+    mean_high = tf.Variable(0, dtype='float64', name='mean_high', trainable=False)
 
     # possibly share parameters with policy-network
     value_network = ValueNetwork(feature_extractor, hidden_units=0)
 
     iterations = 500
     K = 3
-    num_episodes = 2 #8
-    maxlen_environment = 12 #512
+    num_episodes = 8
+    maxlen_environment = 512
     action_repeat = 4
     maxlen = maxlen_environment // action_repeat # max number of actions
     batch_size = 32
@@ -339,7 +343,28 @@ def main():
         # variables using the optimizer.
         for epoch in range(K):
             for batch in dataset:
-                observation, action, advantage, pi_old, value_target, t = batch
+                with tf.GradientTape() as tape:
+                    observation, action, advantage, pi_old, value_target, t = batch
+                    bs = len(observation)
+                    pi_current = policy_network.policy(observation)
+                    pi_current = activations.softmax(pi_current)
+                    v = value_network(observation, maxlen-t)
+
+                    action_idx = tf.transpose([tf.range(bs), action])
+                    pi_old_a = tf.gather_nd(pi_old, action_idx)
+                    pi_a = tf.gather_nd(pi_current, action_idx)
+                    pl = policy_loss(pi_a, pi_old_a, advantage, epsilon) 
+                    vl = value_loss(value_target, v)
+                    el = entropy_loss(pi_a)
+                    loss = pl + c1* vl + c2* el
+                    #print(bs, loss, pl, vl, el)
+                    parameters = []
+                    parameters.extend(value_network.trainable_variables)
+                    parameters.extend(policy_network.trainable_variables)
+                    
+                    grads = tape.gradient(loss, parameters)
+                    optimizer.apply_gradients(zip(grads, parameters))
+                    
 
         print("Iteration %d. Optimized surrogate loss in %f sec." %
               (iteration, time.time()-start))
@@ -352,7 +377,7 @@ def main():
             action = tf.expand_dims(action, -1)
             logits = policy_network.policy(obs)
             pi = activations.softmax(logits)
-            v = value_network(obs, np.float32(maxlen)-t)
+            v = value_network(obs, np.float64(maxlen)-t)
             pi_a = tf.squeeze(tf.gather(pi, action, batch_dims=1), -1)
             pi_old_a = tf.squeeze(tf.gather(pi_old, action, batch_dims=1), -1)
             ratio = pi_a / pi_old_a
@@ -434,9 +459,9 @@ def main():
     agent.save(checkpoint_path + "agent")
 
 if __name__ == '__main__':
-    import pyvirtualdisplay
-    _display = pyvirtualdisplay.Display(visible=False,  # use False with Xvfb
-                                        size=(1400, 900))
-    _ = _display.start()
+    #import pyvirtualdisplay
+    #_display = pyvirtualdisplay.Display(visible=False,  # use False with Xvfb
+    #                                    size=(1400, 900))
+    #_ = _display.start()
     
     main()

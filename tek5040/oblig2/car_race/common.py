@@ -2,7 +2,7 @@ import tensorflow as tf
 
 def preprocess(observation):
 
-    observation = tf.expand_dims(tf.cast(observation, tf.float32), 0)
+    observation = tf.expand_dims(tf.cast(observation, tf.float64), 0)
     # change pixel values from [0, 255] to [-1, 1]
     observation = observation / 127.5 - 1
 
@@ -20,7 +20,7 @@ class ActionEncoder(object):
             [ 1, 0, 0], # (turn right)
             [ 0, 1, 0], # (gas)
             [ 0, 0, 1]  # (brake)
-        ], dtype=tf.float32)
+        ], dtype=tf.float64)
 
     @property
     def num_actions(self):
