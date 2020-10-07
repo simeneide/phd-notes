@@ -1,7 +1,7 @@
 
 import os
 import sys
-sys.path.append("/root/gdrive/My Drive/phd-notes/oblig2")
+sys.path.append("../")
 import time
 import numpy as np
 import tensorflow as tf
