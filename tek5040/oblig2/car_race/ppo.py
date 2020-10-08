@@ -150,7 +150,7 @@ def policy_loss(pi_a, pi_old_a, advantage, epsilon):
 
     u = pi_a/pi_old_a
     u_clip = tf.clip_by_value(u, 1-epsilon, 1+epsilon)
-    loss = tf.reduce_mean(advantage * tf.minimum( u, u_clip))
+    loss = -tf.reduce_mean(tf.minimum( advantage * u, advantage * u_clip))
 
     # TODO: implement policy loss
     #loss = tf.constant(0, dtype=tf.float64) # remove this line
@@ -180,7 +180,8 @@ def estimate_improvement(pi_a, pi_old_a, advantage, t, gamma):
     """
 
     # TODO: Implement this
-    return tf.zeros(tf.shape(advantage), dtype=tf.float64) # remove this line
+    #return tf.zeros(tf.shape(advantage), dtype=tf.float64) # remove this line
+    return (pi_a / pi_old_a) * advantage * gamma**t
 
 def estimate_improvement_lb(pi_a, pi_old_a, advantage, t, gamma, epsilon):
     """Estimate sample contributions to lower bound for improvement, ignoring
@@ -204,9 +205,13 @@ def estimate_improvement_lb(pi_a, pi_old_a, advantage, t, gamma, epsilon):
         lower bound of policy improvement.
 
     """
+    u = (pi_a / pi_old_a)
+    u_clip = tf.clip_by_value(u, 1-epsilon, 1+epsilon)
+
+    return tf.minimum(u*advantage, u_clip * advantage) * gamma**t
 
     # TODO: Implement this
-    return tf.zeros(tf.shape(advantage), dtype=tf.float64) # remove this line
+    #return tf.zeros(tf.shape(advantage), dtype=tf.float64) # remove this line
 
 def entropy(p):
     """Entropy base 2, for each sample in batch."""
@@ -459,9 +464,9 @@ def main():
     agent.save(checkpoint_path + "agent")
 
 if __name__ == '__main__':
-    #import pyvirtualdisplay
-    #_display = pyvirtualdisplay.Display(visible=False,  # use False with Xvfb
-    #                                    size=(1400, 900))
-    #_ = _display.start()
+    import pyvirtualdisplay
+    _display = pyvirtualdisplay.Display(visible=False,  # use False with Xvfb
+                                        size=(1400, 900))
+    _ = _display.start()
     
     main()

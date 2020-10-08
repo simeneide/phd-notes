@@ -4,3 +4,6 @@ gym
 gym[box2d]
 numpy
 Box2d
+pyvirtualdisplay
+PyOpenGL==3.1.*
+PyOpenGL-accelerate==3.1.*

@@ -1,3 +1,6 @@
+
+import sys
+sys.path.append("../")
 import numpy as np
 import gym
 import tensorflow as tf
@@ -11,6 +14,10 @@ from car_race import baselines
 from car_race.common import preprocess
 from car_race.videofig.videofig import videofig
 
+#import pyvirtualdisplay
+#_display = pyvirtualdisplay.Display(visible=False,  # use False with Xvfb
+#                                    size=(1400, 900))
+#_ = _display.start()
 
 def show_episode(observations):
 
