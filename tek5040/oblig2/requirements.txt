@@ -3,3 +3,4 @@ matplotlib
 gym
 gym[box2d]
 numpy
+Box2d
